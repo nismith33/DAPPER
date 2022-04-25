@@ -150,7 +150,11 @@ def run_experiment(xp, label, savedir, HMM, setup=seed_and_simulate, free=True,
     # Copy HMM to avoid changes made by setup affect subsequent experiments.
     # Thus, experiments run in sequence behave the same as experiments run via
     # multiprocessing (which serialize (i.e. copy) the HMM) or on a cluster.
-    hmm = copy.deepcopy(HMM)
+    
+    #ip: hmm = copy.deepcopy(HMM)
+    print('Using superfacial copy')
+    hmm = copy.copy(HMM) #ip:
+    
     # Note that "implicitly referenced" objects do not get copied. For example,
     # if the model `step` function uses parameters defined in its module or object,
     # these will be obtained by re-importing that model, unless it has been serialized.
