@@ -26,6 +26,7 @@ import dapper.tools.series as series
 from dapper.dpr_config import rc
 from dapper.tools.matrices import CovMat
 from dapper.tools.progressbar import progbar
+eps = 1e-24
 
 __pdoc__ = {"align_col": False}
 
@@ -33,7 +34,7 @@ __pdoc__ = {"align_col": False}
 class Stats(series.StatPrint):
     """Contains and computes statistics of the DA methods."""
 
-    def __init__(self, xp, HMM, xx, yy, liveplots=False, store_u=rc.store_u):
+    def __init__(self, xp, HMM, xx, yy, liveplots=False, field_weight=None, store_u=rc.store_u):
         """Init the default statistics."""
         ######################################
         # Preamble
@@ -46,18 +47,27 @@ class Stats(series.StatPrint):
         self.store_u   = store_u
         self.store_s   = any(key in xp.__dict__ for key in
                              ["Lag", "DeCorr"])  # prms used by smoothers
-
+        
+        if field_weight is not None:
+            self.field_w = np.reshape(field_weight, (-1))
+        else:
+            self.field_w = np.ones((np.size(xx,1),))
+        
         # Shapes
         K  = xx.shape[0] - 1
         Nx = xx.shape[1]
-        Ko = yy.shape[0] - 1
-        Ny = yy.shape[1]
+        Ko = len(yy) - 1
+        Ny = HMM.Ny
         self.K , self.Nx = K, Nx
         self.Ko, self.Ny = Ko, Ny
 
         # Methods for summarizing multivariate stats ("fields") as scalars
         # Don't use nanmean here; nan's should get propagated!
-        en_mean = lambda x: np.mean(x, axis=0)  # noqa
+        #ip:en_mean = lambda x: np.mean(x, axis=0)  # noqa
+        en_mean = lambda x: (np.sum(x*np.reshape(self.field_w,np.shape(x)), axis=0)
+                             / np.sum(np.reshape(self.field_w,np.shape(x)), axis=0)
+                             )
+        
         self.field_summaries = dict(
             m   = lambda x: en_mean(x),                  # mean-field
             ms  = lambda x: en_mean(x**2),               # root-mean-square
@@ -181,6 +191,8 @@ class Stats(series.StatPrint):
               the forecast/analysis/universal attribute.
               Default: `'u' if ko is None else 'au' ('a' and 'u')`.
         """
+
+        
         # Initial consistency checks.
         if k == 0:
             if ko is not None:
@@ -252,16 +264,18 @@ class Stats(series.StatPrint):
 
     def derivative_stats(self, now):
         """Stats that derive from others, and are not specific for `_ens` or `_ext`)."""
-        try:
-            now.gscore = 2*np.log(now.spread) + (now.err/now.spread)**2
-        except AttributeError:
-            # happens in case rc.comps['error_only']
-            pass
+        gscore = lambda err,spread: 2*np.log(spread) + (err/spread)**2
+        if hasattr(now,"spread"):
+            now.gscore = np.array([gscore(err1,spread1) if spread1>eps
+                                   else np.nan for err1, spread1 in 
+                                   zip(now.err, now.spread)])
+        else:
+            now.gscore = np.zeros_like(now.err) * np.nan
 
     def assess_ens(self, now, x, E, w):
         """Ensemble and Particle filter (weighted/importance) assessment."""
         N, Nx = E.shape
-
+    
         # weights
         if w is None:
             w = np.ones(N)/N  # All equal. Also, rm attr from stats:
@@ -275,6 +289,8 @@ class Stats(series.StatPrint):
             if abs(w.sum()-1) > 1e-5:
                 raise RuntimeError("Weights did not sum to one.")
             now.mu = w @ E
+            
+        now.mu = now.mu
 
         # Crash checks
         if not np.all(np.isfinite(E)):
@@ -283,11 +299,11 @@ class Stats(series.StatPrint):
             raise RuntimeError("Ensemble not Real.")
 
         # Compute errors
-        now.err = now.mu - x
+        now.err = (now.mu - x) 
         if rc.comps['error_only']:
             return
 
-        A = E - now.mu
+        A = (E - now.mu) 
         # While A**2 is approx as fast as A*A,
         # A**3 is 10x slower than A**2 (or A**2.0).
         # => Use A2 = A**2, A3 = A*A2, A4=A*A3.
@@ -295,7 +311,7 @@ class Stats(series.StatPrint):
         A_pow = A**2
 
         # Compute variances
-        var  = w @ A_pow
+        var  = (w @ A_pow) 
         ub   = unbias_var(w, avoid_pathological=True)
         var *= ub
 
@@ -306,11 +322,19 @@ class Stats(series.StatPrint):
         # For simplicity, use naive (biased) formulae, derived
         # from "empirical measure". See doc/unbiased_skew_kurt.jpg.
         # Normalize by var. Compute "excess" kurt, which is 0 for Gaussians.
+        skew = lambda wA, s: wA/s**3 
+        kurt = lambda wA, s: wA/(s**4-3) 
+        
         A_pow *= A
-        now.skew = np.nanmean(w @ A_pow / (s*s*s))
+        now.skew = np.array([skew(wA1,s1) if s1>eps else np.nan for wA1,s1 in 
+                             zip(w@A_pow,s)])
+        now.skew = np.nanmean(now.skew)
+        
         A_pow *= A
-        now.kurt = np.nanmean(w @ A_pow / var**2 - 3)
-
+        now.kurt = np.array([kurt(wA1,s1) if s1>eps else np.nan for wA1,s1 
+                             in zip(w@A_pow,s)])
+        now.kurt = np.nanmean(now.kurt)
+        
         now.mad  = np.nanmean(w @ abs(A))
 
         if self.do_spectral:
@@ -340,8 +364,8 @@ class Stats(series.StatPrint):
         # Don't check the cov (might not be explicitly availble)
 
         # Compute errors
-        now.mu  = mu
-        now.err = now.mu - x
+        now.mu  = mu 
+        now.err = (now.mu - x) 
         if rc.comps['error_only']:
             return
 
