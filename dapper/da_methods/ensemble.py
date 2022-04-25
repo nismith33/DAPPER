@@ -63,16 +63,16 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     Main references: `bib.sakov2008deterministic`,
     `bib.sakov2008implications`, `bib.hoteit2015mitigating`
     """
-    R     = hnoise.C     # Obs noise cov
     N, Nx = E.shape      # Dimensionality
     N1    = N-1          # Ens size - 1
 
     mu = np.mean(E, 0)   # Ens mean
     A  = E - mu          # Ens anomalies
-
+    
     xo = np.mean(Eo, 0)  # Obs ens mean
     Y  = Eo-xo           # Obs ens anomalies
     dy = y - xo          # Mean "innovation"
+    R  = hnoise.C     # Obs noise cov
 
     if 'PertObs' in upd_a:
         # Uses classic, perturbed observations (Burgers'98)
@@ -102,6 +102,7 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
             # KG = R.inv @ Y.T @ Pw @ A
         elif 'svd' in upd_a:
             # Implementation using svd of Y R^{-1/2}.
+            
             V, s, _ = svd0(Y @ R.sym_sqrt_inv.T)
             d       = pad0(s**2, N) + N1
             Pw      = (V * d**(-1.0)) @ V.T

@@ -21,7 +21,7 @@ from dapper.tools.randvars import RV, GaussRV
 from dapper.tools.seeding import set_seed
 
 from .integration import with_recursion, with_rk4
-from .utils import Id_Obs, ens_compatible, linspace_int, partial_Id_Obs
+from .utils import Id_Obs, ens_compatible, linspace_int, partial_Id_Obs, var_Id_Obs
 
 
 class HiddenMarkovModel(struct_tools.NicePrint):
@@ -125,7 +125,7 @@ class HiddenMarkovModel(struct_tools.NicePrint):
 
         # Init
         xx    = np.zeros((tseq.K   + 1, Dyn.M))
-        yy    = np.zeros((tseq.Ko+1, Obs.M))
+        yy    = [] #np.zeros((tseq.Ko+1, Obs.M))
 
         x = X0.sample(1)
         xx[0] = x
@@ -135,7 +135,9 @@ class HiddenMarkovModel(struct_tools.NicePrint):
             x = Dyn(x, t-dt, dt)
             x = x + np.sqrt(dt)*Dyn.noise.sample(1)
             if ko is not None:
-                yy[ko] = Obs(x, t) + Obs.noise.sample(1)
+                yy1 = Obs(x,t)
+                yy1 = yy1 + Obs.noise.sample(1)
+                yy.append(yy1)
             xx[k] = x
 
         return xx, yy
@@ -170,7 +172,11 @@ class Operator(struct_tools.NicePrint):
     """
 
     def __init__(self, M, model=None, noise=None, **kwargs):
-        self.M = M
+          
+        if isinstance(M, (int)):
+            self.M = M
+        else:
+            raise TypeError("Operator size type not recognized.")
 
         # Default to the Identity operator
         if model is None:
@@ -195,6 +201,8 @@ class Operator(struct_tools.NicePrint):
             setattr(self, key, value)
 
     def __call__(self, *args, **kwargs):
-        return self.model(*args, **kwargs)
-
+        state = self.model(*args, **kwargs)
+        self.M = np.shape(state)[-1]
+        self.noise.M = self.M
+        return state
     printopts = {'ordering': ['M', 'model', 'noise'], "indent": 4}

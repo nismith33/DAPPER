@@ -713,12 +713,18 @@ def sliding_marginals(
             DimsX   = p.dims
         # Pre-process obs dimensions
         # Rm inds of obs if not in DimsX
-        iiY   = [i for i, m in enumerate(p.obs_inds) if m in DimsX]
-        # Rm obs_inds    if not in DimsX
-        DimsY = [m for i, m in enumerate(p.obs_inds) if m in DimsX]
-        # Get dim (within y) of each x
-        DimsY = [DimsY.index(m) if m in DimsY else None for m in DimsX]
-        Ny    = len(iiY)
+        if type(p.obs_inds) is dict:
+            obs = p.obs_inds
+            Ny  = Nx
+            DimsY = DimsX
+        else:
+            obs = None
+            iiY   = [i for i, m in enumerate(p.obs_inds) if m in DimsX]
+            # Rm obs_inds    if not in DimsX
+            DimsY = [m for i, m in enumerate(p.obs_inds) if m in DimsX]
+            # Get dim (within y) of each x
+            DimsY = [DimsY.index(m) if m in DimsY else None for m in DimsX]
+            Ny    = len(iiY)
 
         # Set up figure, axes
         fig, axs = place.freshfig(fignum, figsize=(5, 7), nrows=Nx, sharex=True)
@@ -764,8 +770,11 @@ def sliding_marginals(
         for ix, (_m, iy, ax) in enumerate(zip(DimsX, DimsY, axs)):
             if True:
                 h.x  += ax.plot(d.t, d.x[:, ix], 'k')
-            if iy != None:
+            if iy != None and obs is None:
                 h.y  += ax.plot(d.t, d.y[:, iy], 'g*', ms=10)
+            elif obs is not None:
+                h.y  += ax.plot(d.t, d.y[:, ix], 'g*', ms=10)
+                
             if 'E' in d:
                 h.E  += [ax.plot(d.t, d.E[:, :, ix], **p.ens_props)]
             if 'mu' in d:
@@ -790,18 +799,33 @@ def sliding_marginals(
                 if True:
                     d.t .insert(ind, tseq.tt[k])
                 if True:
-                    d.y .insert(ind, yy[ko, iiY]
-                                if ko is not None else nan*ones(Ny))
-                if True:
                     d.x .insert(ind, xx[k, DimsX])
+                if True:
+                    if ko is None:
+                        y = np.ones_like(xx[k, DimsX]) * nan
+                    else:
+                        H=np.array(obs['linear'](d.x[-1],d.t[-1])).T
+                        H=np.take(H, DimsX, axis=0)
+                        
+                        #For each sliding plot check if H has 1 indicating that an observation has
+                        #taken place. In that case the no of the observation is stored in imax. 
+                        imax = np.argmax(H,axis=1)
+                        Hmax = np.max(H,axis=1)
+                        
+                        y = [yy[ko][imax1] if Hmax1==1 else nan for imax1,Hmax1 in zip(imax,Hmax)]
+                        y = np.array(y,dtype=float)
+                        
+                    d.y  .insert(ind, y)
 
             # Update graphs
             for ix, (_m, iy, ax) in enumerate(zip(DimsX, DimsY, axs)):
                 sliding_xlim(ax, d.t, T_lag, True)
                 if True:
                     h.x[ix]    .set_data(d.t, d.x[:, ix])
-                if iy != None:
+                if iy != None and obs is None:
                     h.y[iy]    .set_data(d.t, d.y[:, iy])
+                elif obs is not None:
+                    h.y[ix]    .set_data(d.t, d.y[:, ix])
                 if 'mu' in d:
                     h.mu[ix]   .set_data(d.t, d.mu[:, ix])
                 if 's' in d:
@@ -891,7 +915,10 @@ def phase_particles(
             d.mu = RollingArray((K_plot, M))
         if True:
             d.x  = RollingArray((K_plot, M))
-        if list(p.obs_inds) == list(p.dims):
+        if type(p.obs_inds) is dict:
+            obs=p.obs_inds
+            d.y  = RollingArray((K_plot, M))
+        elif list(p.obs_inds) == list(p.dims):
             d.y  = RollingArray((K_plot, M))
 
         # Plot tails (invisible coz everything here is nan, for the moment).
@@ -942,7 +969,12 @@ def phase_particles(
                 if True:
                     d.x .insert(ind, xx[k, p.dims])
                 if 'y' in d:
-                    d.y .insert(ind, yy[ko, :] if show_y else nan*ones(M))
+                    y = nan*ones(M)
+                    
+                    if show_y:
+                        y[:np.size(yy[ko])]=yy[ko][:]
+                    
+                    d.y .insert(ind, y)
                 if 'mu' in d:
                     d.mu.insert(ind, mu[key][p.dims])
 

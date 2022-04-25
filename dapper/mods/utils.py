@@ -129,6 +129,7 @@ def direct_obs_matrix(Nx, obs_inds):
     Ny = len(obs_inds)
     H = np.zeros((Ny, Nx))
     H[range(Ny), obs_inds] = 1
+    H = [h for h in H]
 
     # One-liner:
     # H = np.array([[i==j for i in range(M)] for j in jj],float)
@@ -164,6 +165,44 @@ def partial_Id_Obs(Nx, obs_inds):
     def linear(x, t): return H
     Obs = {
         'M': Ny,
+        'model': model,
+        'linear': linear,
+    }
+    return Obs
+
+def var_Id_Obs(Nx) :
+    """Specify identity observations of a subset of obs. indices.
+
+    It is not a function of time.
+
+    Parameters
+    ----------
+    Nx: int
+        Length of state vector
+    obs_inds: ndarray
+        The observed indices.
+
+    Returns
+    -------
+    Obs: dict
+        Observation operator including size of the observation space,
+        observation operator/model and tangent linear observation operator
+    """
+    
+    Ny=lambda t: int(np.mod(np.floor(t),3)+1)
+
+    @name_func(f"Direct time varying partial_id ")
+    @ens_compatible
+    def model(x, t): 
+        obs_inds=np.arange(Ny(t))
+        return x[obs_inds]
+    @name_func(f"Time varying partial_id")
+    def linear(x, t):        
+        obs_inds=np.arange(Ny(t))
+        H = direct_obs_matrix(Nx, obs_inds)
+        return H
+    Obs = {
+        'M': Ny(0),
         'model': model,
         'linear': linear,
     }

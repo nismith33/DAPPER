@@ -96,53 +96,66 @@ class RV_with_mean_and_cov(RV):
 
     def __init__(self, mu=0, C=0, M=None):
         """Init allowing for shortcut notation."""
+        self._M=None
+         
         if isinstance(mu, CovMat):
             raise TypeError("Got a covariance paramter as mu. "
                             + "Use kword syntax (C=...) ?")
-
-        # Set mu
-        mu = np.atleast_1d(mu)
-        assert mu.ndim == 1
-        if len(mu) > 1:
-            if M is None:
-                M = len(mu)
-            else:
-                assert len(mu) == M
+            
+        self.args = {'M':M, 'mu':mu, 'C':C}
+        self.rebuild(M)
+        
+    @property 
+    def M(self):
+        return self._M
+        
+    @M.setter
+    def M(self, M):
+        if self.M is not M:
+            self.rebuild(M)
+        
+    def rebuild(self, M):
+        self._set_M(self.args['mu'], self.args['C'], M)
+        self._set_mu(self.args['mu'])
+        self._set_C(self.args['C'])
+             
+    def _set_M(self, mu, C, M):
+        if M is not None:
+            self._M = M 
+        elif isinstance(mu, np.ndarray) and np.ndim(mu)==1:
+            self._M = len(mu)
+        elif isinstance(C, CovMat):
+            self._M = C.M
+        elif isinstance(C, np.ndarray):
+            self._M = np.size(C,0)
         else:
-            if M is not None:
-                mu = np.ones(M)*mu
-
-        # Set C
-        if isinstance(C, CovMat):
-            if M is None:
-                M = C.M
-        else:
-            if np.isscalar(C) and C == 0:
-                pass  # Assign as pure 0!
-            else:
-                if np.isscalar(C):
-                    M = len(mu)
-                    C = CovMat(C*np.ones(M), 'diag')
-                else:
-                    C = CovMat(C)
-                    if M is None:
-                        M = C.M
-
-        # Validation
-        if len(mu) not in (1, M):
-            raise TypeError("Inconsistent shapes of (M,mu,C)")
-        if M is None:
             raise TypeError("Could not deduce the value of M")
-        try:
-            if M != C.M:
-                raise TypeError("Inconsistent shapes of (M,mu,C)")
-        except AttributeError:
-            pass
-
-        # Assign
-        self.M  = M
-        self.mu = mu
-        self.C  = C
+        
+    def _set_mu(self, mu):
+        if isinstance(mu, (int, float)):
+            self.mu = np.ones((self.M,)) * mu
+        elif isinstance(mu, np.ndarray):
+            self.mu = mu 
+        else:
+            raise TypeError("Could not deduce the value of M")
+        
+        if len(self.mu) != self.M:
+            raise TypeError("Inconsistent shapes of (M,mu,C)")
+        
+    def _set_C(self, C):
+        if isinstance(C, CovMat):
+            self.C = C
+        elif isinstance(C, (int,float)) and C==0:
+            self.C = 0
+        elif isinstance(C, (int,float)):
+            self.C = CovMat(C*np.ones((self.M,)), 'diag')
+        elif isinstance(C, np.ndarray) and np.ndim(C)==1:
+            self.C = CovMat(C, 'diag')
+        else:
+            raise TypeError("Could not deduce the value of M")
+        
+        if isinstance(C, CovMat) and self.M != self.C.M:
+            raise TypeError("Inconsistent shapes of (M,mu,C)")    
 
     def sample(self, N):
         """Sample N realizations. Returns N-by-M (ndim) sample matrix.
@@ -151,6 +164,7 @@ class RV_with_mean_and_cov(RV):
         -------
         >>> plt.scatter(*(UniRV(C=randcov(2)).sample(10**4).T))  # doctest: +SKIP
         """
+       
         if self.C == 0:
             D = np.zeros((N, self.M))
         else:
@@ -164,7 +178,7 @@ class RV_with_mean_and_cov(RV):
 class GaussRV(RV_with_mean_and_cov):
     """Gaussian (Normal) multivariate random variable."""
 
-    def _sample(self, N):
+    def _sample(self, N):           
         R = self.C.Right
         D = rnd.randn(N, len(R)) @ R
         return D
