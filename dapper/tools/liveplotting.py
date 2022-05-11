@@ -812,7 +812,7 @@ def sliding_marginals(
                         imax = np.argmax(H,axis=1)
                         Hmax = np.max(H,axis=1)
                         
-                        y = [yy[ko][imax1] if Hmax1==1 else nan for imax1,Hmax1 in zip(imax,Hmax)]
+                        y = [yy[ko][imax1] if Hmax1>0. else nan for imax1,Hmax1 in zip(imax,Hmax)]
                         y = np.array(y,dtype=float)
                         
                     d.y  .insert(ind, y)
@@ -1168,7 +1168,7 @@ def spatial1d(
         p = DotDict(**{
             kw: kwargs.get(kw, val) for kw, val in params_orig.items()})
 
-        if not p.dims:
+        if len(p.dims)==0:
             M = xx.shape[-1]
             p.dims = arange(M)
         else:
@@ -1204,7 +1204,7 @@ def spatial1d(
             (line_y, ) = ax.plot(p.obs_inds, nan*p.obs_inds, 'g*', ms=5, label='Obs')
 
         # Tune plot
-        ax.set_ylim(*viz.xtrema(xx))
+        ax.set_ylim(*viz.xtrema(xx[:,p.dims]))
         ax.set_xlim(viz.stretch(ii[0], ii[-1], 1))
         # Xticks
         xt = ax.get_xticks()

@@ -144,7 +144,7 @@ class Chronology():
 
     @property
     def Ko(self):
-        return int(self.K/self.dko)-1
+        return len(self.kko)-1
 
     @Ko.setter
     def Ko(self, value):
@@ -163,8 +163,9 @@ class Chronology():
         return np.arange(self.K+1)
 
     @property
-    def kko(self):
-        return self.kk[self.dko::self.dko]
+    def kko(self):        
+        kk=self.kk[self.dko::self.dko]
+        return np.array([kk1 for kk1 in kk if self.tt[kk1]>=self.BurnIn])
 
     @property
     def tt(self):
