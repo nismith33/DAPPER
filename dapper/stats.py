@@ -34,7 +34,7 @@ __pdoc__ = {"align_col": False}
 class Stats(series.StatPrint):
     """Contains and computes statistics of the DA methods."""
 
-    def __init__(self, xp, HMM, xx, yy, liveplots=False, field_weight=None, store_u=rc.store_u):
+    def __init__(self, xp, HMM, xx, yy, liveplots=False, store_u=rc.store_u):
         """Init the default statistics."""
         ######################################
         # Preamble
@@ -48,11 +48,6 @@ class Stats(series.StatPrint):
         self.store_s   = any(key in xp.__dict__ for key in
                              ["Lag", "DeCorr"])  # prms used by smoothers
         
-        if field_weight is not None:
-            self.field_w = np.reshape(field_weight, (-1))
-        else:
-            self.field_w = np.ones((np.size(xx,1),))
-        
         # Shapes
         K  = xx.shape[0] - 1
         Nx = xx.shape[1]
@@ -63,10 +58,7 @@ class Stats(series.StatPrint):
 
         # Methods for summarizing multivariate stats ("fields") as scalars
         # Don't use nanmean here; nan's should get propagated!
-        #ip:en_mean = lambda x: np.mean(x, axis=0)  # noqa
-        en_mean = lambda x: (np.sum(x*np.reshape(self.field_w,np.shape(x)), axis=0)
-                             / np.sum(np.reshape(self.field_w,np.shape(x)), axis=0)
-                             )
+        en_mean = lambda x: np.mean(x, axis=0)  # noqa
         
         self.field_summaries = dict(
             m   = lambda x: en_mean(x),                  # mean-field
