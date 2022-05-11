@@ -165,3 +165,113 @@ def reduce_inodes(save_as, nDir=100):
     So that we can get a progressbar when loading.
     """
     overwrite_xps(load_xps(save_as), save_as, nDir)
+    
+class SaveXP:
+    import dill, os
+    
+    def __init__(self, save_as):
+        self.save_as = os.path.abspath(save_as) 
+        
+        
+    def create_file(self):
+        fdir = os.path.dirname(self.save_as)
+        
+        if not os.path.isdir(fdir):
+            os.mkdir(fdir)
+        
+        if os.path.isfile(self.save_as):
+            os.remove(self.save_as)
+        
+    def save_truth(self, HMM, xx, yy):
+        keys = ['K','Ko','T','BurnIn','dto','dt']
+        
+        tseq_obj = HMM.tseq
+        
+        truth = {'content':'truth'}
+        for key in keys:
+            truth[key] = getattr(tseq_obj, key)
+            
+        truth['xx'] = xx
+        truth['yy'] = yy        
+            
+        with open(self.save_as,'ab+') as stream:
+            dill.dump(truth, stream)
+            
+    def save_forecast(self, E, k, ko):
+        ensemble = {'content':'forecast','k':k,'ko':ko,'E':E}
+        
+        with open(self.save_as,'ab+') as stream:
+            dill.dump(ensemble, stream)
+            
+    def save_analysis(self, E, k, ko=None):
+        ensemble = {'content':'analysis','k':k,'ko':ko,'E':E}
+        
+        with open(self.save_as,'ab+') as stream:
+            dill.dump(ensemble, stream)
+            
+    def load(self, contents=None, kk=None, kko=None):
+        output = []
+        
+        with open(self.save_as,'rb') as stream:
+            while True:
+                try:
+                    data = dill.load(stream)
+                except EOFError:
+                    break 
+                
+                if contents is not None:
+                    data = self.filter(data, 'contents', contents)
+                if kk is not None:
+                    data = self.filter(data, 'kk', kk)
+                if kko is not None:
+                    data = self.filter(data, 'kko', kko)
+                    
+                output.append(data)
+                
+        return output
+    
+    def filter(self, data, key, valid_values):
+        if not hasattr(valid_values, '__iter__'):
+            valid_values = [valid_values]
+            
+        if key not in data:
+            return data 
+        elif data[key] in valid_values:
+            return data 
+        else:
+            return []
+    
+    def create_stats(self, xp, HMM):
+        from dapper.stats import Stats 
+        
+        stats = None
+        read_next = True
+        queue = []
+        
+        with open(self.save_as,'rb') as stream:
+            while read_next:
+                try:
+                    data=dill.load(stream)
+                except EOFError:
+                    break
+                
+                if data['content']=='truth':
+                    stats = Stats(xp, HMM, data['xx'], data['yy'])
+                
+
+                if data['content']=='forecast':
+                    k, ko = data['k'], None
+                    stats.assess(k, ko, E=data['E'])
+                    
+                
+        return stats
+                    
+                
+                
+                    
+                
+                
+                        
+            
+            
+        
