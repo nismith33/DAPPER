@@ -310,7 +310,7 @@ def plot_pause(interval):
         _plot_pause(interval, focus_figure=False)
 
 
-def plot_hovmoller(xx, tseq=None):
+def plot_hovmoller(xx, tseq=None, sectors=None):
     """Plot Hovmöller diagram.
 
     Parameters
@@ -322,13 +322,16 @@ def plot_hovmoller(xx, tseq=None):
     """
     fig, ax = place.freshfig("Hovmoller", figsize=(4, 3.5))
 
+    if sectors is None:
+        sectors=np.arange(0,np.size(xx,1))
+
     if tseq is not None:
         mask = tseq.tt <= tseq.Tplot*2
         kk   = tseq.kk[mask]
         tt   = tseq.tt[mask]
         ax.set_ylabel('Time (t)')
     else:
-        K    = estimate_good_plot_length(xx, mult=20)
+        K    = estimate_good_plot_length(xx[:,sectors], mult=20)
         kk   = arange(K)
         tt   = kk
         ax.set_ylabel('Time indices (k)')
@@ -387,7 +390,7 @@ def not_available_text(ax, txt=None, fs=20):
             wrap=True)
 
 
-def plot_err_components(stats):
+def plot_err_components(stats, sectors=None):
     """Plot components of the error.
 
     Parameters
@@ -405,14 +408,23 @@ def plot_err_components(stats):
     """
     fig, (ax0, ax1, ax2) = place.freshfig("Error components", figsize=(6, 6), nrows=3)
 
+    if sectors is None:
+        sectors=np.arange(0,np.size(stats.xx,1))
+
     tseq = stats.HMM.tseq
-    Nx     = stats.xx.shape[1]
+    Nx     = len(sectors)
 
     en_mean = lambda x: np.mean(x, axis=0)  # noqa
-    err   = en_mean(abs(stats.err.a))
-    sprd  = en_mean(stats.spread.a)
-    umsft = en_mean(abs(stats.umisf.a))
-    usprd = en_mean(stats.svals.a)
+    err   = en_mean(abs(stats.err.a[:,sectors]))
+    sprd  = en_mean(stats.spread.a[:,sectors])
+    if hasattr(stats,'umisf'):
+        umsft = en_mean(abs(stats.umisf.a))
+    else:
+        umsft = np.inf
+    if hasattr(stats,'svals'):
+        usprd = en_mean(stats.svals.a)
+    else:
+        usprd = np.inf
 
     ax0.plot(arange(Nx), err, 'k', lw=2, label='Error')
     if Nx < 10**3:
@@ -452,7 +464,7 @@ def plot_err_components(stats):
     plt.tight_layout()
 
 
-def plot_rank_histogram(stats):
+def plot_rank_histogram(stats, sectors=None):
     """Plot rank histogram of ensemble.
 
     Parameters
@@ -472,6 +484,8 @@ def plot_rank_histogram(stats):
 
     if has_been_computed:
         ranks = stats.rh.a[tseq.masko]
+        if sectors is not None:
+            ranks = ranks[:,sectors]
         Nx    = ranks.shape[1]
         N     = stats.xp.N
         if not hasattr(stats, 'w'):
