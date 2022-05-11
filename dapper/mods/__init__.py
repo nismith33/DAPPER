@@ -19,6 +19,7 @@ from dapper.tools.localization import no_localization
 from dapper.tools.matrices import CovMat
 from dapper.tools.randvars import RV, GaussRV
 from dapper.tools.seeding import set_seed
+from dapper.tools.multiproc import NoneMPI
 
 from .integration import with_recursion, with_rk4
 from .utils import Id_Obs, ens_compatible, linspace_int, partial_Id_Obs, var_Id_Obs
@@ -69,7 +70,8 @@ class HiddenMarkovModel(struct_tools.NicePrint):
                      X0=(RV, None),
                      liveplotters=(list, []),
                      sectors=(dict, {}),
-                     name=(str, HiddenMarkovModel._default_name))
+                     name=(str, HiddenMarkovModel._default_name),
+                     mpi=NoneMPI())
 
         # Transfer args to kwargs
         for arg, kw in zip(args, attrs):
@@ -129,15 +131,18 @@ class HiddenMarkovModel(struct_tools.NicePrint):
 
         x = X0.sample(1)
         xx[0] = x
+        
+        #Flag to activate use of progress bar. 
+        disable_bar = not self.mpi.is_root 
 
         # Loop
-        for k, ko, t, dt in pb.progbar(tseq.ticker, desc):
+        for k, ko, t, dt in pb.progbar(tseq.ticker, desc, disable=disable_bar):
             x = Dyn(x, t-dt, dt)
             x = x + np.sqrt(dt)*Dyn.noise.sample(1)
             if ko is not None:
                 yy1 = Obs(x,t)
                 yy1 = yy1 + Obs.noise.sample(1)
-                yy.append(yy1)
+                yy.append(np.reshape(yy1,(-1)))
             xx[k] = x
 
         return xx, yy

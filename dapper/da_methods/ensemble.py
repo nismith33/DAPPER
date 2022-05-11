@@ -11,8 +11,36 @@ from dapper.tools.linalg import mldiv, mrdiv, pad0, svd0, svdi, tinv, tsvd
 from dapper.tools.matrices import funm_psd, genOG_1
 from dapper.tools.progressbar import progbar
 from dapper.tools.randvars import GaussRV
+ 
 
 from . import da_method
+
+def scatter(mpi, mat_in, row_in, mat_out, row_out):
+     #Copy from complete ensemble to this process. 
+    if mpi.size==1:
+        row_out = row_in
+        mat_out = mat_in
+    else:            
+        mpi.comm.Scatter(row_in, row_out, root=mpi.root)
+        mpi.comm.Scatter(mat_in, mat_out, root=mpi.root)
+        
+    return mat_out,row_out
+
+def gather(mpi, mat_in, row_in, mat_out, row_out):
+     #Copy from complete ensemble to this process. 
+    if mpi.size==1:
+        row_out = row_in
+        mat_out = mat_in
+    else:            
+        mpi.comm.Gather(row_in, row_out, root=mpi.root)
+        mpi.comm.Gather(mat_in, mat_out, root=mpi.root)
+        
+    sorting = np.argsort(row_out)
+    if np.any(np.diff(sorting)<0):
+        row_out = row_out[sorting]
+        mat_out = mat_out[sorting]
+            
+    return mat_out,row_out
 
 
 @da_method
@@ -35,24 +63,60 @@ class EnKF:
     N: int
 
     def assimilate(self, HMM, xx, yy):
-        # Init
-        E = HMM.X0.sample(self.N)
-        self.stats.assess(0, E=E)
-
+        import sys
+        
+        mpi = HMM.mpi
+        size = mpi.size
+        n_members = int(np.ceil(self.N/mpi.size))
+        inan = sys.maxsize
+        
+        # Initial conditions for complete ensemble
+        if mpi.is_root:
+            members_all = inan * np.ones((size * n_members,),dtype=int)
+            members_all[:self.N] = np.arange(0, self.N)
+            
+            E_all = np.zeros((size * n_members, HMM.Dyn.M), dtype=float)
+            E_all[:self.N] = HMM.X0.sample(self.N)
+            self.stats.assess(0, E=E_all[:self.N])
+            
+            if hasattr(self,'save_xp'):
+                self.save_xp.create_file()
+                self.save_xp.save_truth(HMM,xx,yy)
+                self.save_xp.save_forecast(E_all[:self.N], 0, None)
+                
+        else:
+            members_all, E_all = None, None
+            
+        #Initialize part of ensemble on this process. 
+        members = inan * np.ones((n_members,), dtype=int)
+        E = np.zeros((n_members, HMM.Dyn.M), dtype=float)
+        
         # Cycle
-        for k, ko, t, dt in progbar(HMM.tseq.ticker):
-            E = HMM.Dyn(E, t-dt, dt)
-            E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
+        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not mpi.is_root):
+            
+            #Run part of the ensemble on one the processes. 
+            E, members = scatter(mpi, E_all, members_all, E, members)
+            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members=members[members<inan])
+            E_all, members_all = gather(mpi, E, members, E_all, members_all)                
+            
+            if mpi.is_root:                
+                active = members_all<inan
+                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, self.fnoise_treatm)
+                
+                if hasattr(self,'save_xp'):
+                    self.save_xp.save_forecast(E_all[active], k, ko)
 
-            # Analysis update
-            if ko is not None:
-                self.stats.assess(k, ko, 'f', E=E)
-                E = EnKF_analysis(E, HMM.Obs(E, t), HMM.Obs.noise, yy[ko],
-                                  self.upd_a, self.stats, ko)
-                E = post_process(E, self.infl, self.rot)
+                # Analysis update
+                if ko is not None:                
+                    self.stats.assess(k, ko, 'f', E=E_all[active])
+                    E_all[active,:] = EnKF_analysis(E_all[active,:], HMM.Obs(E_all[active,:], t), HMM.Obs.noise, yy[ko],
+                                                  self.upd_a, self.stats, ko)
+                    E_all[active,:] = post_process(E_all[active,:], self.infl, self.rot)
+                    
+                    if hasattr(self,'save_xp'):
+                        self.save_xp.save_analysis(E_all[active], k, ko)
 
-            self.stats.assess(k, ko, E=E)
-
+                self.stats.assess(k, ko, E=E_all[active,:])
 
 def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     """Perform the EnKF analysis update.
