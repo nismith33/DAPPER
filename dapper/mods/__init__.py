@@ -71,7 +71,7 @@ class HiddenMarkovModel(struct_tools.NicePrint):
                      liveplotters=(list, []),
                      sectors=(dict, {}),
                      name=(str, HiddenMarkovModel._default_name),
-                     mpi=NoneMPI())
+                     )
 
         # Transfer args to kwargs
         for arg, kw in zip(args, attrs):

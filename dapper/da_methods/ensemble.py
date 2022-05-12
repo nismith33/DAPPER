@@ -50,6 +50,7 @@ class ens_method:
     infl: float        = 1.0
     rot: bool          = False
     fnoise_treatm: str = 'Stoch'
+    mpi                = multiproc.NoneMPI()
 
 
 @ens_method
@@ -65,13 +66,13 @@ class EnKF:
     def assimilate(self, HMM, xx, yy):
         import sys
         
-        mpi = HMM.mpi
-        size = mpi.size
-        n_members = int(np.ceil(self.N/mpi.size))
+        #Number of MPI processes and number of ensemble members on each process.
+        size = self.mpi.size
+        n_members = int(np.ceil(self.N/self.mpi.size))
         inan = sys.maxsize
         
         # Initial conditions for complete ensemble
-        if mpi.is_root:
+        if self.mpi.is_root:
             members_all = inan * np.ones((size * n_members,),dtype=int)
             members_all[:self.N] = np.arange(0, self.N)
             
@@ -92,14 +93,14 @@ class EnKF:
         E = np.zeros((n_members, HMM.Dyn.M), dtype=float)
         
         # Cycle
-        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not mpi.is_root):
+        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
             
             #Run part of the ensemble on one the processes. 
-            E, members = scatter(mpi, E_all, members_all, E, members)
+            E, members = scatter(self.mpi, E_all, members_all, E, members)
             E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members=members[members<inan])
-            E_all, members_all = gather(mpi, E, members, E_all, members_all)                
+            E_all, members_all = gather(self.mpi, E, members, E_all, members_all)                
             
-            if mpi.is_root:                
+            if self.mpi.is_root:                
                 active = members_all<inan
                 E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, self.fnoise_treatm)
                 
