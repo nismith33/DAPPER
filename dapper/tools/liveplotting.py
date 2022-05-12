@@ -41,6 +41,13 @@ from dapper.tools.progressbar import read1
 from dapper.tools.series import FAUSt, RollingArray
 from dapper.tools.viz import not_available_text, plot_pause
 
+def iindex(values, x):
+    if type(values) is np.ndarray:
+        return np.where(values==x)[0][0]
+    elif type(values) is list:
+        return values.index(x)
+    else:
+        raise TypeError("Cannot find index for type {}.".format(type(values)))
 
 class LivePlot:
     """Live plotting manager.
@@ -704,13 +711,14 @@ def sliding_marginals(
         if has_w:
             K_plot += a_lag
 
-        # Chose marginal dims to plot
+        # Chose marginal dims to plot. 
+        # DimsX: immersion plot->state space
         if not p.dims:
             Nx      = min(10, xx.shape[-1])
             DimsX   = linspace_int(xx.shape[-1], Nx)
         else:
             Nx      = len(p.dims)
-            DimsX   = p.dims
+            DimsX   = np.array(p.dims, dtype=int)
         # Pre-process obs dimensions
         # Rm inds of obs if not in DimsX
         if type(p.obs_inds) is dict:
@@ -719,12 +727,14 @@ def sliding_marginals(
             DimsY = DimsX
         else:
             obs = None
-            iiY   = [i for i, m in enumerate(p.obs_inds) if m in DimsX]
-            # Rm obs_inds    if not in DimsX
-            DimsY = [m for i, m in enumerate(p.obs_inds) if m in DimsX]
-            # Get dim (within y) of each x
-            DimsY = [DimsY.index(m) if m in DimsY else None for m in DimsX]
-            Ny    = len(iiY)
+            p.obs_inds = np.array(p.obs_inds, dtype=int)
+            #p.obs_inds: immersion observation space -> state space
+            #iiy: projection observation space -> plot space 
+            iiY = [iindex(DimsX, m) if m in DimsX else None for m in p.obs_inds]
+            #DimsY: immersion plot -> observation space 
+            DimsY = [iindex(iiY, i) if i in iiY else None for i,m in enumerate(DimsX)]            
+            #Size plot space          
+            Ny    = len(DimsY)
 
         # Set up figure, axes
         fig, axs = place.freshfig(fignum, figsize=(5, 7), nrows=Nx, sharex=True)
@@ -803,6 +813,10 @@ def sliding_marginals(
                 if True:
                     if ko is None:
                         y = np.ones_like(xx[k, DimsX]) * nan
+                    elif obs is None:
+                        y = np.ones_like(xx[k, DimsX]) * nan
+                        y = [np.nan if m is None else yy[ko][m] for m in DimsY]
+                        y = np.array(y,dtype=float)                                
                     else:
                         H=np.array(obs['linear'](d.x[-1],d.t[-1])).T
                         H=np.take(H, DimsX, axis=0)

@@ -172,6 +172,7 @@ def partial_Id_Obs(Nx, obs_inds):
 
 def var_Id_Obs(Nx) :
     """Specify identity observations of a subset of obs. indices.
+    Size subset may vary in time.
 
     It is not a function of time.
 
@@ -179,8 +180,6 @@ def var_Id_Obs(Nx) :
     ----------
     Nx: int
         Length of state vector
-    obs_inds: ndarray
-        The observed indices.
 
     Returns
     -------
@@ -189,6 +188,7 @@ def var_Id_Obs(Nx) :
         observation operator/model and tangent linear observation operator
     """
     
+    #Number of observations as function of time. 
     Ny=lambda t: int(np.mod(np.floor(t),3)+1)
 
     @name_func(f"Direct time varying partial_id ")
@@ -201,11 +201,10 @@ def var_Id_Obs(Nx) :
         obs_inds=np.arange(Ny(t))
         H = direct_obs_matrix(Nx, obs_inds)
         return H
-    Obs = {
-        'M': Ny(0),
-        'model': model,
-        'linear': linear,
-    }
+    Obs = {'M': Ny(0), #Initial value.
+           'model': model,
+           'linear': linear,
+           }
     return Obs
 
 
