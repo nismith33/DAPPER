@@ -50,7 +50,6 @@ class ens_method:
     infl: float        = 1.0
     rot: bool          = False
     fnoise_treatm: str = 'Stoch'
-    mpi                = multiproc.NoneMPI()
 
 
 @ens_method
@@ -62,6 +61,9 @@ class EnKF:
 
     upd_a: str
     N: int
+    
+    #Default mpi controller
+    mpi = multiproc.NoneMPI()
 
     def assimilate(self, HMM, xx, yy):
         import sys
@@ -97,12 +99,14 @@ class EnKF:
             
             #Run part of the ensemble on one the processes. 
             E, members = scatter(self.mpi, E_all, members_all, E, members)
-            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members=members[members<inan])
+            HMM.members = members[members<inan]
+            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt)
             E_all, members_all = gather(self.mpi, E, members, E_all, members_all)                
             
             if self.mpi.is_root:                
                 active = members_all<inan
-                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, self.fnoise_treatm)
+                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, 
+                                          self.fnoise_treatm)
                 
                 if hasattr(self,'save_xp'):
                     self.save_xp.save_forecast(E_all[active], k, ko)

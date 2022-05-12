@@ -72,6 +72,9 @@ class HiddenMarkovModel(struct_tools.NicePrint):
                      sectors=(dict, {}),
                      name=(str, HiddenMarkovModel._default_name),
                      )
+        
+        #Default mpi controller.
+        self.mpi = NoneMPI()
 
         # Transfer args to kwargs
         for arg, kw in zip(args, attrs):
