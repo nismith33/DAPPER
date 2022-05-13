@@ -20,7 +20,7 @@ import os
 from dapper.tools import viz
 #from mpi4py import MPI as mpi
 from multiprocessing import Queue, Process, Barrier
-from dapper.tools.datafiles import SaveXP
+from dapper.tools.datafiles import SaveXP, NetcdfIO
 
 #%% mpi settings
 
@@ -118,7 +118,7 @@ def aev_pnormal(xp=None):
     #Create time sequence. 
     T = 2*60 #minutes
     Burn =  0*60 #minutes
-    tseq = modelling.Chronology(30, dto=T, T=T, Tplot=T, BurnIn=Burn)
+    tseq = modelling.Chronology(30, dto=30, T=T, Tplot=T, BurnIn=Burn)
 
     #Create operator for generating perturbed initial conditions.  
     X0 = modelling.GaussRV(C=var_init, mu=x0)
@@ -148,10 +148,10 @@ def run_truth():
     xx, yy = HMM.simulate()
     return HMM, xx, yy
 
-def xp_wind(xps, xp_name):    
+def xp_wind(xps, nc_name):    
     xps += da.EnKF('Sqrt', N=2, infl=1.00, rot=True)
     
-    xps[-1].save_xp=SaveXP(os.path.join(save_dir, xp_name+'.pkl'))
+    xps[-1].save_nc=NetcdfIO(os.path.join(save_dir, nc_name+'.pkl'))
     xps[-1].noise_init = default_noise_init
     xps[-1].noise_wind = [default_noise_wind(5000+n*100) for n in range(0,xps[-1].N)]
     xps[-1].seed = default_seed + 1000
@@ -170,7 +170,7 @@ def xps_run(xps, xx, yy):
             
     return xps
 
-if __name__ == '__main__' and True:
+if __name__ == '__main__' and False:
     xps = xpList()
     xps = xp_wind(xps,'wind_noda')
     

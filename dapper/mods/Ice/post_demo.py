@@ -7,8 +7,17 @@ Created on Wed May 11 13:35:11 2022
 """
 
 from demo import *
+from dapper.tools.datafiles import NetcdfIO
+import netCDF4 as netcdf
+
+nc=NetcdfIO('/home/ivo/dpr_data/mpi_test/test.nc')
+nc.create_file()
 
 HMM = aev_pnormal()
+nc.create_dims(HMM,2)
+
+nc=netcdf.Dataset('/home/ivo/dpr_data/mpi_test/test.nc','r') 
+nc['time'][:]
 
 xps = xpList()
 xps = xp_wind(xps,'test')
