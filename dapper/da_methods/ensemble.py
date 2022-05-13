@@ -82,10 +82,10 @@ class EnKF:
             E_all[:self.N] = HMM.X0.sample(self.N)
             self.stats.assess(0, E=E_all[:self.N])
             
-            if hasattr(self,'save_xp'):
-                self.save_xp.create_file()
-                self.save_xp.save_truth(HMM,xx,yy)
-                self.save_xp.save_forecast(E_all[:self.N], 0, None)
+            if hasattr(self,'save_nc'):
+                self.save_nc.create_file()
+                self.save_nc.create_dims(HMM, self.N)
+                self.save_nc.write_forecast(0, E_all[:self.N])
                 
         else:
             members_all, E_all = None, None
@@ -108,8 +108,8 @@ class EnKF:
                 E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, 
                                           self.fnoise_treatm)
                 
-                if hasattr(self,'save_xp'):
-                    self.save_xp.save_forecast(E_all[active], k, ko)
+                if hasattr(self,'save_nc'):
+                    self.save_nc.write_forecast(k, E_all[active])
 
                 # Analysis update
                 if ko is not None:                
@@ -118,10 +118,10 @@ class EnKF:
                                                   self.upd_a, self.stats, ko)
                     E_all[active,:] = post_process(E_all[active,:], self.infl, self.rot)
                     
-                    if hasattr(self,'save_xp'):
-                        self.save_xp.save_analysis(E_all[active], k, ko)
+                    if hasattr(self,'save_nc'):
+                        self.save_nc.write_analysis(ko, E_all[active])
 
-                self.stats.assess(k, ko, E=E_all[active,:])
+                self.stats.assess(k, ko, E=E_all[active])
 
 def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     """Perform the EnKF analysis update.
