@@ -15,8 +15,6 @@ from pip._vendor.colorama import initialise
 from mpi4py import MPI as mpi
 from dapper.tools.multiproc import NoneMPI, EnsembleMPI
 
-        
-        
 
 # %% Define model components.
 
@@ -64,6 +62,30 @@ class IceModel(ABC):
 
             self.coordinates[field.meta] = global_coordinates(
                 field.as_function)
+            
+    def point_observer(self, database, x, t):
+        if self.initialiser is None:
+            msg = "Initialiser not yet created. Run model first."
+            raise AttributeError(msg)
+        else:
+            state = self.initialiser.pop()
+            state.set_data(x)
+        
+        #Select observations taken at current time. 
+        selection = np.array(database['time'])==t
+        yy = np.zeros((sum(selection),), dtype=float)
+        
+        if any(selection):        
+            #Create database with observations at this time. 
+            db = database[selection]
+            
+            #Sample observations. 
+            for field in state.fields:
+                selection = db['field_name']==field.meta.name
+                coord = db['coordinates'][selection]
+                yy[selection] = np.reshape(field.sample(coord), (-1))
+                
+        return yy
 
     def step1(self, x0, t, dt, n):
         # Convert minutes to seconds.
@@ -76,16 +98,17 @@ class IceModel(ABC):
         self.runner.stepables[-1].activator = SingleTime(time0 + no_steps * self.dt)
 
         if self.initialiser is None:
-            self.initialiser = ArrayInitialiser(time0, x0)
-        else:
-            self.initialiser.time = time0
-            self.initialiser.array = x0
+            self.initialiser = ArrayInitialiser(time0, 0.*x0)
+        self.initialiser.time = time0
+        self.initialiser.array = x0
 
-        self.forcing.n = n
+        #Pass ensemble member to forcings
+        for m,_ in enumerate(self.forcings):
+            self.forcings[m].n=n
         self.runner.run_forward(self.initialiser, no_steps + 1)
         observer = self.runner.steppers[-1]
-
-        return observer.state_as_vector(-1)
+        
+        return observer.data[-1]
 
     def step(self, E, t, dt, members=None):        
         E = self.si2meta_units(E)
@@ -161,12 +184,22 @@ class ElastoViscousModel(IceModel):
     def build_fields(self):
         self.build_thickness_ice()
         self.build_velocity_ice()
+        self.build_damage()
+        
+    def build_damage(self):
+        from pyIce.fields import MetaField
+        from pyIce.units import SiUnit
+
+        def func(t, x): return 0.1
+        self.damage = MetaField((), func, name="damage",
+                                unit=SiUnit(), lbound=lambda: 0., 
+                                ubound=lambda: 1.)
 
     def build_thickness_ice(self):
         from pyIce.fields import MetaField
         from pyIce.units import m
 
-        def func(t, x): return 4.
+        def func(t, x): return 2.
         self.thickness_ice = MetaField((), func, name="thickness_ice",
                                        unit=m, lbound=lambda: 0.)
 
@@ -190,7 +223,8 @@ class ElastoViscousModel(IceModel):
 
         evp_builder = EvpBuilder(self.mesh, 1, self.boundaries,
                                  thickness_ice=self.thickness_ice,
-                                 velocity_ice=self.velocity_ice)
+                                 velocity_ice=self.velocity_ice,
+                                 damage=self.damage)
         space_factory = SameSpaceFactory(
             self.mesh, 'DG', self.order, variant="spectral")
         director = ModelDirector(self.mesh, space_factory)
@@ -228,8 +262,11 @@ class AdvElastoViscousModel(ElastoViscousModel):
                                  velocity_air=self.velocity_air)
         trans_builder = TransportBuilder(self.mesh, 1, self.boundaries,
                                          **evp_builder.args)
-        lfilter = np.zeros((self.order+1,))
-        lfilter[-2:] = np.array([.1, 1.])
+        
+        lfilter = np.ones((self.order+1,))
+        #lfilter[-2:] = np.array([1., 10.])
+        lfilter[-3:]=np.array([1., .95, .1])
+        lfilter[-3:]=np.array([.99, .8, .05])
 
         space_factory = SameSpaceFactory(self.mesh, 'DG', self.order,
                                          variant="spectral")
@@ -244,7 +281,7 @@ class AdvElastoViscousModel(ElastoViscousModel):
                     LegendreFilter(lfilter),
                     StepTimeForward(self.dt), ArrayCollector(Always())]
 
-        filter_activator = PeriodicIterations(10)
+        filter_activator = PeriodicIterations(5)
         steppers[2].activator = filter_activator
 
         runner = ModelRunner(steppers)
