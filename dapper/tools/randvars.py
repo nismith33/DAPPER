@@ -7,6 +7,12 @@ from struct_tools import NicePrint
 
 from dapper.tools.matrices import CovMat
 
+#Datatype to store point measurements.
+def point_obs_type(dim):
+    return np.dtype([('time',float), ('coordinates',float,(dim,)),
+                    ('bias',float), ('var',float),
+                    ('field_name',np.unicode_,32),
+                    ('measurement',float)])
 
 class RV(NicePrint):
     """Class to represent random variables."""
@@ -178,6 +184,38 @@ class RV_with_mean_and_cov(RV):
 class GaussRV(RV_with_mean_and_cov):
     """Gaussian (Normal) multivariate random variable."""
 
+    def _sample(self, N):           
+        R = self.C.Right
+        D = rnd.randn(N, len(R)) @ R
+        return D
+    
+class TimeGaussRV(RV_with_mean_and_cov):
+    """Gaussian (Normal) multivariate random variable."""
+    
+    def __init__(self, database):
+        """ Set database from which variances and means are retrieved."""
+        self._time = None
+        self.args = {}
+        
+        self.database = database
+        self.time = min(database['time'])
+        
+    @property
+    def time(self):
+        return self._time
+    
+    @time.setter
+    def time(self, time):
+        if self.time != time:
+            selection = self.database['time'] == time 
+            M = sum(selection)
+        if self._time != time and M>0:
+            self._time = time
+            self.args['mu'] = self.database['bias'][selection]
+            self.args['C'] = self.database['var'][selection]
+            self.args['M'] = M
+            self.rebuild(M)
+    
     def _sample(self, N):           
         R = self.C.Right
         D = rnd.randn(N, len(R)) @ R

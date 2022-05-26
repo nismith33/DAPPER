@@ -207,6 +207,23 @@ def var_Id_Obs(Nx) :
            }
     return Obs
 
+def model_Obs(model_obs, database):
+    
+    #Number of observations
+    Ny = lambda t: sum(np.array(database['time']==t))
+    
+    @name_func(f"Point observations.")
+    @ens_compatible
+    def model(x, t):         
+        return model_obs(database, x, t)
+        
+    @name_func(f"H for point observations")
+    def linear(x, t): 
+        msg = "Observation operator H not implemented for point_obs."
+        raise NotImplementedError(msg)
+    
+    Obs = {'M': 1, 'model': model, 'linear': linear}
+    return Obs
 
 def Id_Obs(Nx):
     """Specify identity observations of entire state.
