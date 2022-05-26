@@ -8,7 +8,7 @@ Created on Sun May  8 16:03:56 2022
 
 from IPython import get_ipython
 ip = get_ipython()
-ip.run_cell(("!OMP_NUM_THREADS=1; "
+ip.run_cell(("!export OMP_NUM_THREADS=1; "
              "source /home/ivo/.local/opt/firderake/firedrake/bin/activate; "
              "export PYTHONPATH=/home/ivo/Code/pyIce; "
-             "mpiexec -n 2 python demo.py"))
+             "mpiexec -n 16 python demo.py"))
