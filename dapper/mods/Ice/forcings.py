@@ -12,6 +12,7 @@ the ice simulations.
 import datetime
 import numpy as np
 from abc import ABC, abstractmethod
+from pickle import NONE
 
 
 class SpectrumDrawer(ABC):
@@ -149,29 +150,103 @@ class EnsembleForcing(Forcing):
         return self.forcing(t, x)
 
 class AR(ABC):
+    
+    def default_init(self, dt, mean, var, r, base_seed):
+        self.dt = dt 
+        self.mean = np.reshape(mean,(-1))
+        self.std = np.reshape(np.sqrt(var * dt.total_seconds()), (-1))
+        self.base_seed = base_seed
+        self.r = r
         
-    def next(self, draw, *args):
-        r0 = 1. 
-        new  = self.mu
-        for arg, r in zip(args, self.r):
-            new += (arg - self.mu) * r
-            r0  -= r**2
-        new += np.sqrt(r0 * self.var) * draw
-        return new
+        self.shape = np.shape(mean)
+        
+        self.time = None 
+        self.seed = None
+        
+    def build_matrix(self):
+        self.R = np.diag(np.ones_like(self.r),1)
+        
+        self.R[0] = 0.*self.R[0]
+        self.R[0,0] = 1.
+        
+        r0 = np.sqrt(1.-np.sum(self.r**2))
+        self.R[-1] = np.append(r0, self.r)
+            
+        self.invR=np.linalg.inv(self.R)
+            
+    def forward(self):
+        self.time = self.time + self.dt
+        self.set_seed(self.time)
+        self.values[0] = np.random.normal(scale=self.std)
+        
+        self.values = self.R @ self.values
+            
+    def backward(self):
+        self.values = self.invR @ self.values 
+        
+        self.time = self.time - self.dt 
+        self.set_seed(self.time)
+        self.values[0] = np.random.normal(scale=self.std)
+          
+    @abstractmethod 
+    def build_values(self, time):
+        pass
+        
+    def sample(self, time): 
+        if self.time is None:
+            self.build_matrix()
+            self.build_values(time)
+                      
+        while self.time < time:
+            self.forward()
+        while self.time > time:
+            self.backward()
+            
+        return np.reshape(self.values[-1] + self.mean, self.shape) 
+    
+    def set_seed(self, time):
+        new_seed = int(time.timestamp()) + self.base_seed
+
+        if new_seed != self.seed:
+            self.seed = new_seed
+            np.random.seed(self.seed)
     
 class AR0(AR):
     
-    def __init__(self, dt, mean, variance):
-        self.mu = mean
-        self.r = []
-        self.var = variance
+    def __init__(self, dt, mean=0., var=1., base_seed=1000):
+        self.default_init(dt, mean, var, np.array([]), base_seed)
+        
+    def build_values(self, time):
+        pass
+        
+    def build_matrix(self):
+        pass
+    
+    def sample(self, time):
+        if time!=self.time:
+            self.time = time
+            self.set_seed(self.time)
+            self.values=np.random.normal(loc=self.mean, scale=self.std)
+            
+        return np.reshape(self.values+self.mean, self.shape)
 
 class AR1(AR):
 
-    def __init__(self, dt, mean, variance, correlation_time):
-        self.mu = mean
-        self.r = [np.exp(-dt / correlation_time)]
-        self.var = variance
+    def __init__(self, dt, mean=0., var=1., T=None, base_seed=1000):
+        if T is None:
+            r = np.exp(-1.)
+        else:
+            r = np.exp(-dt.total_seconds()/T.total_seconds())
+        
+        self.default_init(dt, mean, var, np.array([r]), base_seed)
+       
+    def build_values(self, time):
+        self.values = np.zeros((2,np.size(self.std)))
+
+        self.time = time
+        self.set_seed(self.time)
+        self.values[0] = np.random.normal(scale=self.std)
+        self.values[1] = np.random.normal(scale=self.std)
         
 class MovingWave(Forcing):
 
@@ -192,68 +267,39 @@ class MovingWave(Forcing):
         self.center = None
         self.set_noise()
 
-    def set_noise(self, drawer=RandomDrawer(), signal=0., velocity=0.,
-                  amplification=0.):
-        self.drawer = drawer
-        self.amplitude_noise = {}
-        self.amplitude_noise['signal'] = signal
-        self.amplitude_noise['velocity'] = velocity
-        self.amplitude_noise['amplification'] = amplification
-
-    def step_forward(self, time):
-         if self.previous_time is None or time > self.previous_time :
-
-            #self.velocity =
-            #amp = self.amplitude_noise['velocity'] * \
-            #    self.drawer.draw(time, -.33)
-            #self.velocity += np.ones_like(self.velocity) * amp
-
-            #amp = self.amplitude_noise['amplification'] * \
-            #    self.drawer.draw(time, -.66)
-            #self.amplification += np.ones_like(self.amplification) * amp
+    def set_noise(self, amplification=lambda t:0., center=lambda t:0.):
+        self.noise_amplification = amplification 
+        self.noise_center = center
             
-            #dt = (time - self.previous_time).total_seconds()
-            #self.center = self.center + self.velocity * dt
-            
-            #Amplification factor total wind field. 
-            dt = self.dt.total_seconds()
-            var=self.amplitude_noise['amplification']**2
-            draw = self.drawer.draw(time, -.66)
-            
-            T_corr=datetime.timedelta(minutes=10.)
-            if self.amplification is None:
-                ar=AR0(self.dt, self.base_amplification, var)
-                self.amplification = ar.next(draw)
-            else:
-                ar=AR1(self.dt, self.base_amplification, var, T_corr)
-                self.amplification = ar.next(draw, self.amplification)
-                
-            #Position center storm
-            T_corr=datetime.timedelta(days=5.)
-            var=(self.amplitude_noise['velocity'])**2 
-            draw = self.drawer.draw(time, -.33)
-            center  = (0.5 * self.length + (time-self.ref_time).total_seconds()
-                       * self.base_velocity)
-            
-            if self.center is None:
-                ar=AR0(self.dt, center, var)
-                self.center = ar.next(draw)
-            else:
-                ar=AR1(self.dt, center, var, T_corr)
-                self.center = ar.next(draw, center)
-
-            self.previous_time = time
-
-    def forcing(self, t, x):
-        self.step_forward(t)
-        phase = (np.mod(x, self.length) - np.mod(self.center, self.length)) / self.length 
+    def update_amplification(self, time):
+        self.amplification = self.base_amplification + self.noise_amplification.sample(time)
         
-        t=(t-self.ref_time)/datetime.timedelta(days=1)
-        ramp_factor  = np.mod(int(t)+1,2)
+    def update_center(self, time):
+        t = (time-self.ref_time).total_seconds()
+        center  = t * self.base_velocity        
+        self.center = center + self.noise_center.sample(time)
+
+    def forcing(self, t, x):   
+        self.update_amplification(t)
+        self.update_center(t)
+            
+        #Relative time.
+        t=(t-self.ref_time)/datetime.timedelta(days=2)
+
+        #Behaviour based on relative time.
+        tmode = np.mod(int(t),4)
+        if tmode==0:
+            phase = np.mod(x+self.center, self.length)/self.length - 0.5
+            ramp_factor = -1.
+        elif tmode==2:
+            phase = np.mod(x-self.center, self.length)/self.length - 0.5
+            ramp_factor = 1.
+        else:
+            phase = (np.mod(x, self.length) - np.mod(self.center, self.length)) / self.length 
+            ramp_factor = 0.
+            
+        #Smooth out jumps in time. 
         ramp_factor *= 1.-np.cos(np.pi*t)**4
-        
-        #t=(t-self.ref_time)/datetime.timedelta(hours=1)
-        #ramp_factor = min(1.,t)
         
         signal = ramp_factor * self.amplification * self.base_function(phase)
         #signal += self.amplitude_noise['signal'] * self.drawer.draw(t,x)
