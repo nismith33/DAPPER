@@ -187,8 +187,19 @@ class NetcdfIO:
         if os.path.isfile(self.file_path):
             os.remove(self.file_path)
             
-        with Dataset(self.file_path, 'w', format=self.format) as nc:
+        with self.istream as nc:
            nc.creation_time = datetime.now().strftime('%Y-%m-%d %h:%m:%S')
+    
+    @property   
+    def istream(self):
+        if os.path.isfile(self.file_path): 
+            return Dataset(self.file_path, 'a', format=self.format)
+        else:
+            return Dataset(self.file_path, 'w', format=self.format)
+    
+    @property 
+    def ostream(self):
+        return Dataset(self.file_path, 'r', format=self.format)
            
     def create_dims(self, HMM, N):
         self.create_dim_time(HMM.tseq)
@@ -197,7 +208,7 @@ class NetcdfIO:
         self.create_dim_ens(N)
         
     def create_dim_ens(self, N):                
-        with Dataset(self.file_path, 'a', format=self.format) as nc:
+        with self.istream as nc:
             nc.createDimension('N', N)
             
             window = nc.createVariable('window', self.int_type, ('time',))
@@ -211,7 +222,7 @@ class NetcdfIO:
             Eana.long_name = "Ensemble of analysis states at different times."
         
     def create_dim_time(self, tseq):              
-        with Dataset(self.file_path, 'a', format=self.format) as nc:
+        with self.istream as nc:
             for var in ['K','Ko','T','BurnIn','dto','dt']:
                 setattr(nc, var, getattr(tseq, var))
             
@@ -224,12 +235,13 @@ class NetcdfIO:
             nc.createDimension('timeo', tseq.Ko+1)
             timeo = nc.createVariable('timeo', self.float_type, ('timeo',))
             self.timeo = np.arange(0, tseq.Ko+1, dtype=float) * tseq.dto + tseq.BurnIn 
+            self.timeo = self.timeo + max(1., np.ceil(tseq.BurnIn/tseq.dto)) * tseq.dto
             timeo[:] = self.timeo
             time.long_name = "Times at which observations are available."
             
             
     def create_dim_state(self, HMM):     
-        with Dataset(self.file_path, 'a', format=self.format) as nc:
+        with self.istream as nc:
             M = HMM.Dyn.M
             nc.createDimension('M', M)
             
@@ -263,7 +275,7 @@ class NetcdfIO:
         x0 = np.zeros((HMM.Dyn.M,), dtype=float)
         self.Mo = np.array([np.size(HMM.Obs(x0,t)) for t in self.time], dtype=int)
         
-        with Dataset(self.file_path, 'a', format=self.format) as nc:
+        with self.istream as nc:
             nc.createDimension('Mo', max(self.Mo))             
             
             yy = nc.createVariable('yy', self.float_type, ('timeo','Mo'))
@@ -274,11 +286,23 @@ class NetcdfIO:
             
             
     def write_truth(self, xx, yy):        
-        with Dataset(self.file_path, 'a', format=self.format) as nc:
-            nc.xx[:,:] = np.array(xx, dtype=float) 
+        with self.istream as nc:
+            nc['xx'][:,:] = np.array(xx, dtype=float) 
             for no,y in enumerate(yy):
-                nc.Mo[no] = len(y)
-                nc.yy[no,:len(y)] = y
+                nc['Mo'][no] = len(y)
+                nc['yy'][no,:len(y)] = y
+                
+    def read_truth(self):
+        with self.ostream as nc:
+            xx = np.array(nc['xx'][:,:], dtype=float) 
+            ya = np.array(nc['yy'][:,:], dtype=float) 
+            Mo = np.array(nc['Mo'][:], dtype=int)
+            
+        yy = []
+        for ko,m in enumerate(Mo):
+            yy.append(ya[ko,:m])
+        
+        return xx, yy
                 
     def write_forecast(self, it, E): 
         with Dataset(self.file_path, 'a', format=self.format) as nc:

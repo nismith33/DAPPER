@@ -22,7 +22,7 @@ from dapper.tools.seeding import set_seed
 from dapper.tools.multiproc import NoneMPI
 
 from .integration import with_recursion, with_rk4
-from .utils import Id_Obs, ens_compatible, linspace_int, partial_Id_Obs, var_Id_Obs
+from .utils import Id_Obs, ens_compatible, linspace_int, partial_Id_Obs, var_Id_Obs, model_Obs
 
 
 class HiddenMarkovModel(struct_tools.NicePrint):
@@ -211,6 +211,11 @@ class Operator(struct_tools.NicePrint):
     def __call__(self, *args, **kwargs):
         state = self.model(*args, **kwargs)
         self.M = np.shape(state)[-1]
-        self.noise.M = self.M
+        
+        if hasattr(self.noise,'time'):
+            self.noise.time = args[1]
+        else:
+            self.noise.M = self.M
+        
         return state
     printopts = {'ordering': ['M', 'model', 'noise'], "indent": 4}

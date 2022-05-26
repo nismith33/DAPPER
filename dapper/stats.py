@@ -26,11 +26,191 @@ import dapper.tools.series as series
 from dapper.dpr_config import rc
 from dapper.tools.matrices import CovMat
 from dapper.tools.progressbar import progbar
+from pickle import NONE
 eps = 1e-24
 
 __pdoc__ = {"align_col": False}
 
+class series_stack:
+    
+    def __init__(self, times, values):
+        self.iarg = np.argsort(times)
+        self.times = times
+        self.values = values
+        self.is_empty = len(self.iarg)>0
+        
+    @property 
+    def time(self):
+        if self.is_empty:
+            return None 
+        else:
+            return self.times[self.iarg[0]]
+    
+    @property 
+    def value(self):
+        if self.is_empty:
+            return None 
+        else:
+            return self.values[self.iarg[0]]
+    
+    
+    def next(self):
+        if len(self.iarg)>1:
+            self.iarg = self.iarg[1:]
+        else:
+            self.is_empty = True
+            
+def window(time_ana, data_ana, time_for, data_for):
+    stack_ana = series_stack(time_ana, data_ana)
+    stack_for = series_stack(time_for, data_for)
+    
+    windows, window = [], []
+    while not stack_ana.is_empty or not stack_for.is_empty:
+        if stack_ana.is_empty or stack_for.time<=stack_ana.time:
+            window.append((stack_for.time, stack_for.value))
+            stack_for.next()
+        elif stack_for.is_empty or stack_ana.time<stack_for.time:
+            windows.append(window)
+            window = []
+            
+            window.append((stack_ana.time, stack_ana.value))
+            stack_ana.next()
+            
+    if len(window)>0:
+        windows.append(window)
+        
+    return windows            
 
+def ens_rmse(xx, E, sector=None):
+    """Calculate root-mean square error directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    xx: array of float 
+        Array with time along axis=0 and space along axis=1.
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Root-mean-square error for each time step.  
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    rmse=[]
+    for x,e in zip(xx,E):
+        error2 = (e[:,sector] - np.reshape(x[sector],(1,-1)))**2
+        error2 = np.mean(error2)
+        rmse.append(np.sqrt(error2))
+        
+    return np.array(rmse, dtype=float)
+        
+def ens_bias(xx, E, sector=None):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    xx: array of float 
+        Array with time along axis=0 and space along axis=1.
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Bias for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    bias=[]
+    for x,e in zip(xx, E):
+        error = (e[:,sector] - np.reshape(x[sector],(1,-1)))
+        error = np.mean(error)
+        bias.append(error)
+        
+    return np.array(bias, dtype=float)
+
+def ens_mean(E, sector=None, ):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Ensemble mean for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(E,1))
+    
+    mean=[]
+    
+    for e in E:
+        mean.append(np.mean(e[:,sector]))
+        
+    return np.array(mean, dtype=float)
+            
+def ens_spread(E, sector=None):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Ensemble mean for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    spread=[]
+    for e in E:
+        var = np.var(e[:,sector], axis=0)
+        spread.append(np.sqrt(np.mean(var)))
+          
+    return np.array(spread, dtype=float)   
+
+def ens_ranks(xx, E, sector=None):
+    """Calculate rank truth within ensemble. 
+    
+    xx : array of float
+        Truth with time dimension along axis=0 
+        and space along axis=1. 
+    E : array of float 
+        Ensemble with member along axis=0, 
+        time along axis=1, space along axis=2.
+        
+    Returns
+    -------
+    Histogram with probability for each rank. 
+    """
+    if sector is None:
+        sector = np.arange(0,np.size(E,2))
+    
+    xx = xx[:,sector]
+    xx = np.reshape(xx,(np.size(xx,0),1,np.size(xx,1)))
+    E = np.sort(E[:,:,sector], axis=1) - xx
+    ranks = np.sum(E<0., axis=1)
+    
+    bins = np.array(np.arange(0,np.size(E,1)+2),dtype=float)-.5
+    histos = np.zeros((np.size(E,0),len(bins)-1))
+    for n,rank in enumerate(ranks):
+        histos[n,:] = np.histogram(rank,bins=bins)[0]
+    return histos
+        
 class Stats(series.StatPrint):
     """Contains and computes statistics of the DA methods."""
 
@@ -342,10 +522,9 @@ class Stats(series.StatPrint):
                 now.svals = np.sqrt(s2.clip(0))[::-1]
                 now.umisf = U.T[::-1] @ now.err
 
-            # For each state dim [i], compute rank of truth (x) among the ensemble (E)
-            E_x = np.sort(np.vstack((E, x)), axis=0, kind='heapsort')
-            now.rh = np.asarray(
-                [np.where(E_x[:, i] == x[i])[0][0] for i in range(Nx)])
+        # For each state dim [i], compute rank of truth (x) among the ensemble (E)
+        E_x = np.sort(np.vstack((E, x)), axis=0, kind='heapsort')
+        now.rh = np.asarray([np.where(E_x[:, i] == x[i])[0][0] for i in range(Nx)])
 
     def assess_ext(self, now, x, mu, P):
         """Kalman filter (Gaussian) assessment."""
