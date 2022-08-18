@@ -47,7 +47,7 @@ def exp_ref_forcing(N=100,seed=1000):
     return xp, HMM, model
 
 if __name__=='__main__':
-    xp, HMM, model = exp_forcing_noise()
+    xp, HMM, model = exp_ref_forcing()
     
     #Run
     xx, yy = HMM.simulate()

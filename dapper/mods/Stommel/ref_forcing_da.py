@@ -48,7 +48,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
     return xp, HMM, model 
 
 if __name__=='__main__':
-    xp, HMM, model = exp_forcing_noise_da()
+    xp, HMM, model = exp_ref_forcing_da()
     
     #Run
     xx, yy = HMM.simulate()
