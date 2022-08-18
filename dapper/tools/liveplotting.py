@@ -41,6 +41,13 @@ from dapper.tools.progressbar import read1
 from dapper.tools.series import FAUSt, RollingArray
 from dapper.tools.viz import not_available_text, plot_pause
 
+def iindex(values, x):
+    if type(values) is np.ndarray:
+        return np.where(values==x)[0][0]
+    elif type(values) is list:
+        return values.index(x)
+    else:
+        raise TypeError("Cannot find index for type {}.".format(type(values)))
 
 class LivePlot:
     """Live plotting manager.
@@ -704,21 +711,30 @@ def sliding_marginals(
         if has_w:
             K_plot += a_lag
 
-        # Chose marginal dims to plot
+        # Chose marginal dims to plot. 
+        # DimsX: immersion plot->state space
         if not p.dims:
             Nx      = min(10, xx.shape[-1])
             DimsX   = linspace_int(xx.shape[-1], Nx)
         else:
             Nx      = len(p.dims)
-            DimsX   = p.dims
+            DimsX   = np.array(p.dims, dtype=int)
         # Pre-process obs dimensions
         # Rm inds of obs if not in DimsX
-        iiY   = [i for i, m in enumerate(p.obs_inds) if m in DimsX]
-        # Rm obs_inds    if not in DimsX
-        DimsY = [m for i, m in enumerate(p.obs_inds) if m in DimsX]
-        # Get dim (within y) of each x
-        DimsY = [DimsY.index(m) if m in DimsY else None for m in DimsX]
-        Ny    = len(iiY)
+        if type(p.obs_inds) is dict:
+            obs = p.obs_inds
+            Ny  = Nx
+            DimsY = DimsX
+        else:
+            obs = None
+            p.obs_inds = np.array(p.obs_inds, dtype=int)
+            #p.obs_inds: immersion observation space -> state space
+            #iiy: projection observation space -> plot space 
+            iiY = [iindex(DimsX, m) if m in DimsX else None for m in p.obs_inds]
+            #DimsY: immersion plot -> observation space 
+            DimsY = [iindex(iiY, i) if i in iiY else None for i,m in enumerate(DimsX)]            
+            #Size plot space          
+            Ny    = len(DimsY)
 
         # Set up figure, axes
         fig, axs = place.freshfig(fignum, figsize=(5, 7), nrows=Nx, sharex=True)
@@ -764,8 +780,11 @@ def sliding_marginals(
         for ix, (_m, iy, ax) in enumerate(zip(DimsX, DimsY, axs)):
             if True:
                 h.x  += ax.plot(d.t, d.x[:, ix], 'k')
-            if iy != None:
+            if iy != None and obs is None:
                 h.y  += ax.plot(d.t, d.y[:, iy], 'g*', ms=10)
+            elif obs is not None:
+                h.y  += ax.plot(d.t, d.y[:, ix], 'g*', ms=10)
+                
             if 'E' in d:
                 h.E  += [ax.plot(d.t, d.E[:, :, ix], **p.ens_props)]
             if 'mu' in d:
@@ -790,18 +809,37 @@ def sliding_marginals(
                 if True:
                     d.t .insert(ind, tseq.tt[k])
                 if True:
-                    d.y .insert(ind, yy[ko, iiY]
-                                if ko is not None else nan*ones(Ny))
-                if True:
                     d.x .insert(ind, xx[k, DimsX])
+                if True:
+                    if ko is None:
+                        y = np.ones_like(xx[k, DimsX]) * nan
+                    elif obs is None:
+                        y = np.ones_like(xx[k, DimsX]) * nan
+                        y = [np.nan if m is None else yy[ko][m] for m in DimsY]
+                        y = np.array(y,dtype=float)                                
+                    else:
+                        H=np.array(obs['linear'](d.x[-1],d.t[-1])).T
+                        H=np.take(H, DimsX, axis=0)
+                        
+                        #For each sliding plot check if H has 1 indicating that an observation has
+                        #taken place. In that case the no of the observation is stored in imax. 
+                        imax = np.argmax(H,axis=1)
+                        Hmax = np.max(H,axis=1)
+                        
+                        y = [yy[ko][imax1] if Hmax1>0. else nan for imax1,Hmax1 in zip(imax,Hmax)]
+                        y = np.array(y,dtype=float)
+                        
+                    d.y  .insert(ind, y)
 
             # Update graphs
             for ix, (_m, iy, ax) in enumerate(zip(DimsX, DimsY, axs)):
                 sliding_xlim(ax, d.t, T_lag, True)
                 if True:
                     h.x[ix]    .set_data(d.t, d.x[:, ix])
-                if iy != None:
+                if iy != None and obs is None:
                     h.y[iy]    .set_data(d.t, d.y[:, iy])
+                elif obs is not None:
+                    h.y[ix]    .set_data(d.t, d.y[:, ix])
                 if 'mu' in d:
                     h.mu[ix]   .set_data(d.t, d.mu[:, ix])
                 if 's' in d:
@@ -891,7 +929,10 @@ def phase_particles(
             d.mu = RollingArray((K_plot, M))
         if True:
             d.x  = RollingArray((K_plot, M))
-        if list(p.obs_inds) == list(p.dims):
+        if type(p.obs_inds) is dict:
+            obs=p.obs_inds
+            d.y  = RollingArray((K_plot, M))
+        elif list(p.obs_inds) == list(p.dims):
             d.y  = RollingArray((K_plot, M))
 
         # Plot tails (invisible coz everything here is nan, for the moment).
@@ -942,7 +983,12 @@ def phase_particles(
                 if True:
                     d.x .insert(ind, xx[k, p.dims])
                 if 'y' in d:
-                    d.y .insert(ind, yy[ko, :] if show_y else nan*ones(M))
+                    y = nan*ones(M)
+                    
+                    if show_y:
+                        y[:np.size(yy[ko])]=yy[ko][:]
+                    
+                    d.y .insert(ind, y)
                 if 'mu' in d:
                     d.mu.insert(ind, mu[key][p.dims])
 
@@ -1136,7 +1182,7 @@ def spatial1d(
         p = DotDict(**{
             kw: kwargs.get(kw, val) for kw, val in params_orig.items()})
 
-        if not p.dims:
+        if len(p.dims)==0:
             M = xx.shape[-1]
             p.dims = arange(M)
         else:
@@ -1172,7 +1218,7 @@ def spatial1d(
             (line_y, ) = ax.plot(p.obs_inds, nan*p.obs_inds, 'g*', ms=5, label='Obs')
 
         # Tune plot
-        ax.set_ylim(*viz.xtrema(xx))
+        ax.set_ylim(*viz.xtrema(xx[:,p.dims]))
         ax.set_xlim(viz.stretch(ii[0], ii[-1], 1))
         # Xticks
         xt = ax.get_xticks()

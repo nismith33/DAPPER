@@ -161,3 +161,6 @@ doc-build
 dapper/mods/QG/f90/prms_*\.txt
 
 .pdb-pyhist
+.project
+.pydevproject
+dapper-env

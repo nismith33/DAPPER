@@ -71,3 +71,73 @@ def Pool(NPROC=None):
             NPROC = mpd.cpu_count() - 1  # be nice
 
         return mpd.Pool(NPROC)
+ 
+from abc import ABC, abstractmethod 
+
+class MPI(ABC):
+
+    @abstractmethod
+    def rank(self):
+        pass
+
+    @abstractmethod
+    def size(self):
+        pass
+
+    @property
+    def root(self):
+        return 0
+
+    @property
+    def is_root(self):
+        return self.rank == self.root
+    
+    @property 
+    def info(self):
+        print('MPI rank {:d} of {:d}. Root? {}'.format(self.rank,self.size,self.is_root))
+
+
+class NoneMPI(MPI):
+
+    def __init__(self):
+        self._rank = self.root
+        self._size = 1
+
+    @property
+    def rank(self):
+        return self._rank
+
+    @property
+    def size(self):
+        return self._size
+
+
+class CommMPI(MPI):
+
+    def __init__(self, comm):
+        self.comm = comm
+
+    @property
+    def rank(self):
+        return self.comm.rank
+
+    @property
+    def size(self):
+        return self.comm.Get_size()
+    
+class EnsembleMPI(MPI):
+
+    def __init__(self, ensemble_mpi):
+        self.ensemble = ensemble_mpi
+        
+    @property 
+    def comm(self):
+        return self.ensemble.ensemble_comm 
+
+    @property
+    def rank(self):
+        return self.comm.rank
+
+    @property
+    def size(self):
+        return self.comm.Get_size()

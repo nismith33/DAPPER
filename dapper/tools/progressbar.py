@@ -7,6 +7,7 @@ import sys
 import warnings
 
 from tqdm.auto import tqdm
+from faulthandler import disable
 
 # In case stdin or term settings isn't supported, for ex. when
 # running pytest or multiprocessing.
@@ -55,7 +56,12 @@ def pdesc(desc):
 
 def progbar(iterable, desc=None, leave=1, **kwargs):
     """Prints a nice progress bar in the terminal"""
-    if disable_progbar:
+    if "disable" in kwargs:
+        disable = kwargs["disable"]
+    else:
+        disable = disable_progbar
+    
+    if disable:
         return iterable
     else:
         desc = pdesc(desc)

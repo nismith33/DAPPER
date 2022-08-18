@@ -129,6 +129,7 @@ def direct_obs_matrix(Nx, obs_inds):
     Ny = len(obs_inds)
     H = np.zeros((Ny, Nx))
     H[range(Ny), obs_inds] = 1
+    H = [h for h in H]
 
     # One-liner:
     # H = np.array([[i==j for i in range(M)] for j in jj],float)
@@ -169,6 +170,60 @@ def partial_Id_Obs(Nx, obs_inds):
     }
     return Obs
 
+def var_Id_Obs(Nx) :
+    """Specify identity observations of a subset of obs. indices.
+    Size subset may vary in time.
+
+    It is not a function of time.
+
+    Parameters
+    ----------
+    Nx: int
+        Length of state vector
+
+    Returns
+    -------
+    Obs: dict
+        Observation operator including size of the observation space,
+        observation operator/model and tangent linear observation operator
+    """
+    
+    #Number of observations as function of time. 
+    Ny=lambda t: int(np.mod(np.floor(t),3)+1)
+
+    @name_func(f"Direct time varying partial_id ")
+    @ens_compatible
+    def model(x, t): 
+        obs_inds=np.arange(Ny(t))
+        return x[obs_inds]
+    @name_func(f"Time varying partial_id")
+    def linear(x, t):        
+        obs_inds=np.arange(Ny(t))
+        H = direct_obs_matrix(Nx, obs_inds)
+        return H
+    Obs = {'M': Ny(0), #Initial value.
+           'model': model,
+           'linear': linear,
+           }
+    return Obs
+
+def model_Obs(model_obs, database):
+    
+    #Number of observations
+    Ny = lambda t: sum(np.array(database['time']==t))
+    
+    @name_func(f"Point observations.")
+    @ens_compatible
+    def model(x, t):         
+        return model_obs(database, x, t)
+        
+    @name_func(f"H for point observations")
+    def linear(x, t): 
+        msg = "Observation operator H not implemented for point_obs."
+        raise NotImplementedError(msg)
+    
+    Obs = {'M': 1, 'model': model, 'linear': linear}
+    return Obs
 
 def Id_Obs(Nx):
     """Specify identity observations of entire state.

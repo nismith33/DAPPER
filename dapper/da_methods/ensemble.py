@@ -11,8 +11,36 @@ from dapper.tools.linalg import mldiv, mrdiv, pad0, svd0, svdi, tinv, tsvd
 from dapper.tools.matrices import funm_psd, genOG_1
 from dapper.tools.progressbar import progbar
 from dapper.tools.randvars import GaussRV
+ 
 
 from . import da_method
+
+def scatter(mpi, mat_in, row_in, mat_out, row_out):
+     #Copy from complete ensemble to this process. 
+    if mpi.size==1:
+        row_out = row_in
+        mat_out = mat_in
+    else:            
+        mpi.comm.Scatter(row_in, row_out, root=mpi.root)
+        mpi.comm.Scatter(mat_in, mat_out, root=mpi.root)
+        
+    return mat_out,row_out
+
+def gather(mpi, mat_in, row_in, mat_out, row_out):
+     #Copy from complete ensemble to this process. 
+    if mpi.size==1:
+        row_out = row_in
+        mat_out = mat_in
+    else:            
+        mpi.comm.Gather(row_in, row_out, root=mpi.root)
+        mpi.comm.Gather(mat_in, mat_out, root=mpi.root)
+        
+    sorting = np.argsort(row_out)
+    if np.any(np.diff(sorting)<0):
+        row_out = row_out[sorting]
+        mat_out = mat_out[sorting]
+            
+    return mat_out,row_out
 
 
 @da_method
@@ -24,6 +52,38 @@ class ens_method:
     fnoise_treatm: str = 'Stoch'
 
 
+def init_mpi_ensemble(object, HMM):
+    import sys
+        
+    #Number of MPI processes and number of ensemble members on each process.
+    size = object.mpi.size
+    n_members = int(np.ceil(object.N/object.mpi.size))
+    inan = sys.maxsize
+    
+    # Initial conditions for complete ensemble
+    if object.mpi.is_root:
+        members_all = inan * np.ones((size * n_members,), dtype=int)
+        members_all[:object.N] = np.arange(0, object.N)
+        
+        E_all = np.zeros((size * n_members, HMM.Dyn.M), dtype=float)
+        E_all[:object.N] = HMM.X0.sample(object.N)
+        object.stats.assess(0, E=E_all[:object.N])            
+    else:
+        members_all, E_all = None, None
+        
+    #Initialize part of ensemble on this process. 
+    members = inan * np.ones((n_members,), dtype=int)
+    E = np.zeros((n_members, HMM.Dyn.M), dtype=float)
+    
+    return E, members, E_all, members_all, inan
+
+def init_save_ensemble(object, HMM, xx, yy, E):
+    if object.mpi.is_root:
+        object.save_nc.create_file()
+        object.save_nc.create_dims(HMM, object.N)
+        object.save_nc.write_truth(xx, yy)
+        object.save_nc.write_forecast(0, E[:object.N])
+
 @ens_method
 class EnKF:
     """The ensemble Kalman filter.
@@ -33,26 +93,42 @@ class EnKF:
 
     upd_a: str
     N: int
+    
+    #Default mpi controller
+    mpi = multiproc.NoneMPI()
 
     def assimilate(self, HMM, xx, yy):
-        # Init
-        E = HMM.X0.sample(self.N)
-        self.stats.assess(0, E=E)
-
+        E, members, E_all, members_all, inan = init_mpi_ensemble(self, HMM)
+        if hasattr(self,'save_nc'):
+            init_save_ensemble(self, HMM, xx, yy, E_all)
+        
         # Cycle
-        for k, ko, t, dt in progbar(HMM.tseq.ticker):
-            E = HMM.Dyn(E, t-dt, dt)
-            E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
+        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
+            
+            #Run part of the ensemble on one the processes. 
+            E, members = scatter(self.mpi, E_all, members_all, E, members)
+            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members[members<inan])
+            E_all, members_all = gather(self.mpi, E, members, E_all, members_all)                
+            
+            if self.mpi.is_root:                
+                active = members_all<inan
+                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, 
+                                          self.fnoise_treatm)
+                
+                if hasattr(self,'save_nc'):
+                    self.save_nc.write_forecast(k, E_all[active])
 
-            # Analysis update
-            if ko is not None:
-                self.stats.assess(k, ko, 'f', E=E)
-                E = EnKF_analysis(E, HMM.Obs(E, t), HMM.Obs.noise, yy[ko],
-                                  self.upd_a, self.stats, ko)
-                E = post_process(E, self.infl, self.rot)
+                # Analysis update
+                if ko is not None:                
+                    self.stats.assess(k, ko, 'f', E=E_all[active])
+                    E_all[active,:] = EnKF_analysis(E_all[active,:], HMM.Obs(E_all[active,:], t), HMM.Obs.noise, yy[ko],
+                                                  self.upd_a, self.stats, ko)
+                    E_all[active,:] = post_process(E_all[active,:], self.infl, self.rot)
+                    
+                    if hasattr(self,'save_nc'):
+                        self.save_nc.write_analysis(ko, E_all[active])
 
-            self.stats.assess(k, ko, E=E)
-
+                self.stats.assess(k, ko, E=E_all[active])
 
 def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     """Perform the EnKF analysis update.
@@ -63,16 +139,16 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     Main references: `bib.sakov2008deterministic`,
     `bib.sakov2008implications`, `bib.hoteit2015mitigating`
     """
-    R     = hnoise.C     # Obs noise cov
     N, Nx = E.shape      # Dimensionality
     N1    = N-1          # Ens size - 1
 
     mu = np.mean(E, 0)   # Ens mean
     A  = E - mu          # Ens anomalies
-
+    
     xo = np.mean(Eo, 0)  # Obs ens mean
     Y  = Eo-xo           # Obs ens anomalies
     dy = y - xo          # Mean "innovation"
+    R  = hnoise.C     # Obs noise cov
 
     if 'PertObs' in upd_a:
         # Uses classic, perturbed observations (Burgers'98)
@@ -102,6 +178,7 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
             # KG = R.inv @ Y.T @ Pw @ A
         elif 'svd' in upd_a:
             # Implementation using svd of Y R^{-1/2}.
+            
             V, s, _ = svd0(Y @ R.sym_sqrt_inv.T)
             d       = pad0(s**2, N) + N1
             Pw      = (V * d**(-1.0)) @ V.T
@@ -853,15 +930,28 @@ class EnKF_N:
     def assimilate(self, HMM, xx, yy):
         R, N, N1 = HMM.Obs.noise.C, self.N, self.N-1
 
-        # Init
-        E = HMM.X0.sample(N)
-        self.stats.assess(0, E=E)
+        # Init        
+        E1, members1, E0, members0, inan = init_mpi_ensemble(self, HMM)
+        if hasattr(self,'save_nc'):
+            init_save_ensemble(self, HMM, xx, yy, E0)
 
         # Cycle
-        for k, ko, t, dt in progbar(HMM.tseq.ticker):
-            # Forecast
-            E = HMM.Dyn(E, t-dt, dt)
+        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
+            #Forecast, Run part of the ensemble on one the processes. 
+            E1, members1 = scatter(self.mpi, E0, members0, E1, members1)
+            E1[members1<inan] = HMM.Dyn(E1[members1<inan], t-dt, dt, 
+                                        members1[members1<inan])
+            E0, members0 = gather(self.mpi, E1, members1, E0, members0)
+            
+            if self.mpi.is_root:
+                E=E0[members0<inan] 
+            else:
+                continue 
+            
             E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
+            
+            if hasattr(self,'save_nc'):
+                    self.save_nc.write_forecast(k, E) 
 
             # Analysis
             if ko is not None:
@@ -964,4 +1054,8 @@ class EnKF_N:
                 self.stats.infl[ko] = l1
                 self.stats.trHK[ko] = (((l1*s)**2 + N1)**(-1.0)*s**2).sum()/HMM.Ny
 
+                if hasattr(self,'save_nc'):
+                    self.save_nc.write_analysis(ko, E)
+                    
             self.stats.assess(k, ko, E=E)
+            E0[members0<inan]=E 
