@@ -26,10 +26,191 @@ import dapper.tools.series as series
 from dapper.dpr_config import rc
 from dapper.tools.matrices import CovMat
 from dapper.tools.progressbar import progbar
+from pickle import NONE
+eps = 1e-24
 
 __pdoc__ = {"align_col": False}
 
+class series_stack:
+    
+    def __init__(self, times, values):
+        self.iarg = np.argsort(times)
+        self.times = times
+        self.values = values
+        self.is_empty = len(self.iarg)>0
+        
+    @property 
+    def time(self):
+        if self.is_empty:
+            return None 
+        else:
+            return self.times[self.iarg[0]]
+    
+    @property 
+    def value(self):
+        if self.is_empty:
+            return None 
+        else:
+            return self.values[self.iarg[0]]
+    
+    
+    def next(self):
+        if len(self.iarg)>1:
+            self.iarg = self.iarg[1:]
+        else:
+            self.is_empty = True
+            
+def window(time_ana, data_ana, time_for, data_for):
+    stack_ana = series_stack(time_ana, data_ana)
+    stack_for = series_stack(time_for, data_for)
+    
+    windows, window = [], []
+    while not stack_ana.is_empty or not stack_for.is_empty:
+        if stack_ana.is_empty or stack_for.time<=stack_ana.time:
+            window.append((stack_for.time, stack_for.value))
+            stack_for.next()
+        elif stack_for.is_empty or stack_ana.time<stack_for.time:
+            windows.append(window)
+            window = []
+            
+            window.append((stack_ana.time, stack_ana.value))
+            stack_ana.next()
+            
+    if len(window)>0:
+        windows.append(window)
+        
+    return windows            
 
+def ens_rmse(xx, E, sector=None):
+    """Calculate root-mean square error directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    xx: array of float 
+        Array with time along axis=0 and space along axis=1.
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Root-mean-square error for each time step.  
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    rmse=[]
+    for x,e in zip(xx,E):
+        error2 = (e[:,sector] - np.reshape(x[sector],(1,-1)))**2
+        error2 = np.mean(error2)
+        rmse.append(np.sqrt(error2))
+        
+    return np.array(rmse, dtype=float)
+        
+def ens_bias(xx, E, sector=None):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    xx: array of float 
+        Array with time along axis=0 and space along axis=1.
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Bias for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    bias=[]
+    for x,e in zip(xx, E):
+        error = (e[:,sector] - np.reshape(x[sector],(1,-1)))
+        error = np.mean(error)
+        bias.append(error)
+        
+    return np.array(bias, dtype=float)
+
+def ens_mean(E, sector=None, ):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Ensemble mean for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(E,1))
+    
+    mean=[]
+    
+    for e in E:
+        mean.append(np.mean(e[:,sector]))
+        
+    return np.array(mean, dtype=float)
+            
+def ens_spread(E, sector=None):
+    """Calculate bias directly from ensemble.
+    
+    E: array of float 
+        Array with time along axis=0, ensemble member along axis=1 
+        and space along axis=2
+    sector: array of int 
+        Spatial indices used in calculation.
+        
+    Returns
+    -------
+    Ensemble mean for each time step. 
+    """
+    
+    if sector is None:
+        sector = np.arange(0,np.size(xx,1))
+    
+    spread=[]
+    for e in E:
+        var = np.var(e[:,sector], axis=0)
+        spread.append(np.sqrt(np.mean(var)))
+          
+    return np.array(spread, dtype=float)   
+
+def ens_ranks(xx, E, sector=None):
+    """Calculate rank truth within ensemble. 
+    
+    xx : array of float
+        Truth with time dimension along axis=0 
+        and space along axis=1. 
+    E : array of float 
+        Ensemble with member along axis=0, 
+        time along axis=1, space along axis=2.
+        
+    Returns
+    -------
+    Histogram with probability for each rank. 
+    """
+    if sector is None:
+        sector = np.arange(0,np.size(E,2))
+    
+    xx = xx[:,sector]
+    xx = np.reshape(xx,(np.size(xx,0),1,np.size(xx,1)))
+    E = np.sort(E[:,:,sector], axis=1) - xx
+    ranks = np.sum(E<0., axis=1)
+    
+    bins = np.array(np.arange(0,np.size(E,1)+2),dtype=float)-.5
+    histos = np.zeros((np.size(E,0),len(bins)-1))
+    for n,rank in enumerate(ranks):
+        histos[n,:] = np.histogram(rank,bins=bins)[0]
+    return histos
+        
 class Stats(series.StatPrint):
     """Contains and computes statistics of the DA methods."""
 
@@ -46,18 +227,19 @@ class Stats(series.StatPrint):
         self.store_u   = store_u
         self.store_s   = any(key in xp.__dict__ for key in
                              ["Lag", "DeCorr"])  # prms used by smoothers
-
+        
         # Shapes
         K  = xx.shape[0] - 1
         Nx = xx.shape[1]
-        Ko = yy.shape[0] - 1
-        Ny = yy.shape[1]
+        Ko = len(yy) - 1
+        Ny = HMM.Ny
         self.K , self.Nx = K, Nx
         self.Ko, self.Ny = Ko, Ny
 
         # Methods for summarizing multivariate stats ("fields") as scalars
         # Don't use nanmean here; nan's should get propagated!
         en_mean = lambda x: np.mean(x, axis=0)  # noqa
+        
         self.field_summaries = dict(
             m   = lambda x: en_mean(x),                  # mean-field
             ms  = lambda x: en_mean(x**2),               # root-mean-square
@@ -181,6 +363,8 @@ class Stats(series.StatPrint):
               the forecast/analysis/universal attribute.
               Default: `'u' if ko is None else 'au' ('a' and 'u')`.
         """
+
+        
         # Initial consistency checks.
         if k == 0:
             if ko is not None:
@@ -252,16 +436,18 @@ class Stats(series.StatPrint):
 
     def derivative_stats(self, now):
         """Stats that derive from others, and are not specific for `_ens` or `_ext`)."""
-        try:
-            now.gscore = 2*np.log(now.spread) + (now.err/now.spread)**2
-        except AttributeError:
-            # happens in case rc.comps['error_only']
-            pass
+        gscore = lambda err,spread: 2*np.log(spread) + (err/spread)**2
+        if hasattr(now,"spread"):
+            now.gscore = np.array([gscore(err1,spread1) if spread1>eps
+                                   else np.nan for err1, spread1 in 
+                                   zip(now.err, now.spread)])
+        else:
+            now.gscore = np.zeros_like(now.err) * np.nan
 
     def assess_ens(self, now, x, E, w):
         """Ensemble and Particle filter (weighted/importance) assessment."""
         N, Nx = E.shape
-
+    
         # weights
         if w is None:
             w = np.ones(N)/N  # All equal. Also, rm attr from stats:
@@ -275,6 +461,8 @@ class Stats(series.StatPrint):
             if abs(w.sum()-1) > 1e-5:
                 raise RuntimeError("Weights did not sum to one.")
             now.mu = w @ E
+            
+        now.mu = now.mu
 
         # Crash checks
         if not np.all(np.isfinite(E)):
@@ -283,11 +471,11 @@ class Stats(series.StatPrint):
             raise RuntimeError("Ensemble not Real.")
 
         # Compute errors
-        now.err = now.mu - x
+        now.err = (now.mu - x) 
         if rc.comps['error_only']:
             return
 
-        A = E - now.mu
+        A = (E - now.mu) 
         # While A**2 is approx as fast as A*A,
         # A**3 is 10x slower than A**2 (or A**2.0).
         # => Use A2 = A**2, A3 = A*A2, A4=A*A3.
@@ -295,7 +483,7 @@ class Stats(series.StatPrint):
         A_pow = A**2
 
         # Compute variances
-        var  = w @ A_pow
+        var  = (w @ A_pow) 
         ub   = unbias_var(w, avoid_pathological=True)
         var *= ub
 
@@ -306,11 +494,19 @@ class Stats(series.StatPrint):
         # For simplicity, use naive (biased) formulae, derived
         # from "empirical measure". See doc/unbiased_skew_kurt.jpg.
         # Normalize by var. Compute "excess" kurt, which is 0 for Gaussians.
+        skew = lambda wA, s: wA/s**3 
+        kurt = lambda wA, s: wA/(s**4-3) 
+        
         A_pow *= A
-        now.skew = np.nanmean(w @ A_pow / (s*s*s))
+        now.skew = np.array([skew(wA1,s1) if s1>eps else np.nan for wA1,s1 in 
+                             zip(w@A_pow,s)])
+        now.skew = np.nanmean(now.skew)
+        
         A_pow *= A
-        now.kurt = np.nanmean(w @ A_pow / var**2 - 3)
-
+        now.kurt = np.array([kurt(wA1,s1) if s1>eps else np.nan for wA1,s1 
+                             in zip(w@A_pow,s)])
+        now.kurt = np.nanmean(now.kurt)
+        
         now.mad  = np.nanmean(w @ abs(A))
 
         if self.do_spectral:
@@ -326,10 +522,9 @@ class Stats(series.StatPrint):
                 now.svals = np.sqrt(s2.clip(0))[::-1]
                 now.umisf = U.T[::-1] @ now.err
 
-            # For each state dim [i], compute rank of truth (x) among the ensemble (E)
-            E_x = np.sort(np.vstack((E, x)), axis=0, kind='heapsort')
-            now.rh = np.asarray(
-                [np.where(E_x[:, i] == x[i])[0][0] for i in range(Nx)])
+        # For each state dim [i], compute rank of truth (x) among the ensemble (E)
+        E_x = np.sort(np.vstack((E, x)), axis=0, kind='heapsort')
+        now.rh = np.asarray([np.where(E_x[:, i] == x[i])[0][0] for i in range(Nx)])
 
     def assess_ext(self, now, x, mu, P):
         """Kalman filter (Gaussian) assessment."""
@@ -340,8 +535,8 @@ class Stats(series.StatPrint):
         # Don't check the cov (might not be explicitly availble)
 
         # Compute errors
-        now.mu  = mu
-        now.err = now.mu - x
+        now.mu  = mu 
+        now.err = (now.mu - x) 
         if rc.comps['error_only']:
             return
 
