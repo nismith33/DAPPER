@@ -11,7 +11,7 @@ from dapper.tools.linalg import mldiv, mrdiv, pad0, svd0, svdi, tinv, tsvd
 from dapper.tools.matrices import funm_psd, genOG_1
 from dapper.tools.progressbar import progbar
 from dapper.tools.randvars import GaussRV
- 
+from copy import copy 
 
 from . import da_method
 
@@ -98,37 +98,31 @@ class EnKF:
     mpi = multiproc.NoneMPI()
 
     def assimilate(self, HMM, xx, yy):
-        E, members, E_all, members_all, inan = init_mpi_ensemble(self, HMM)
-        if hasattr(self,'save_nc'):
-            init_save_ensemble(self, HMM, xx, yy, E_all)
+        # Init
+        E = HMM.X0.sample(self.N)
+        self.stats.assess(0, E=E)
         
+        Efor, Eana = [], []
+        Efor.append(copy(E))
+
         # Cycle
-        for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
-            
-            #Run part of the ensemble on one the processes. 
-            E, members = scatter(self.mpi, E_all, members_all, E, members)
-            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members[members<inan])
-            E_all, members_all = gather(self.mpi, E, members, E_all, members_all)                
-            
-            if self.mpi.is_root:                
-                active = members_all<inan
-                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, 
-                                          self.fnoise_treatm)
+        for k, ko, t, dt in progbar(HMM.tseq.ticker):
+            E = HMM.Dyn(E, t-dt, dt)
+            E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
+            Efor.append(copy(E))
+
+            # Analysis update
+            if ko is not None:
+                self.stats.assess(k, ko, 'f', E=E)
+                E = EnKF_analysis(E, HMM.Obs(E, t), HMM.Obs.noise, yy[ko],
+                                  self.upd_a, self.stats, ko)
+                E = post_process(E, self.infl, self.rot)
+                Eana.append(copy(E))
                 
-                if hasattr(self,'save_nc'):
-                    self.save_nc.write_forecast(k, E_all[active])
+            self.stats.assess(k, ko, E=E)
+            
+        return (Efor, Eana)
 
-                # Analysis update
-                if ko is not None:                
-                    self.stats.assess(k, ko, 'f', E=E_all[active])
-                    E_all[active,:] = EnKF_analysis(E_all[active,:], HMM.Obs(E_all[active,:], t), HMM.Obs.noise, yy[ko],
-                                                  self.upd_a, self.stats, ko)
-                    E_all[active,:] = post_process(E_all[active,:], self.infl, self.rot)
-                    
-                    if hasattr(self,'save_nc'):
-                        self.save_nc.write_analysis(ko, E_all[active])
-
-                self.stats.assess(k, ko, E=E_all[active])
 
 def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     """Perform the EnKF analysis update.
