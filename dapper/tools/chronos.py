@@ -7,6 +7,15 @@ from struct_tools import AlignedDict
 from dapper.tools.colors import color_text
 
 
+def dko_iterator(self, kko):
+    for ko0, ko1 in zip([0]+kko[:-1], kko):
+        yield ko1-ko0
+        
+def smod(counter, denominator, *args):
+    prem =  np.mod( counter, denominator, *args)
+    mrem = -np.mod(-counter, denominator, *args)
+    return prem if np.abs(prem)<=np.abs(mrem) else mrem
+
 class Chronology():
     """Time schedules with consistency checks.
 
@@ -44,135 +53,159 @@ class Chronology():
     """
 
     def __init__(self, dt=None, dto=None, T=None, BurnIn=-1,
-                 dko=None, Ko=None, K=None, Tplot=None):
-
-        assert 3 == [dt, dto, T, dko, Ko, K].count(None), \
-            'Chronology is specified using exactly 3 parameters.'
-
-        # Reduce all to "state vars" dt,dko,K
-        if not dt:
-            if T and K:
-                dt = T/K
-            elif dko and dto:
-                dt = dto/dko
-            elif T and dko and Ko:
-                dt = T/(Ko+1)/dko
-            else:
-                raise TypeError('Unable to interpret time setup')
-        if not dko:
-            if dto:
-                dko = round(dto/dt)
-                assert abs(dto - dko*dt) < dt*1e-9
-            else:
-                raise TypeError('Unable to interpret time setup')
-        assert isinstance(dko, int)
-        if not K:
-            if T:
-                K = round(T/dt)
-                assert abs(T - K*dt) < dt*1e-9
-            elif Ko:
-                K = dko*(Ko+1)
-            else:
-                raise TypeError('Unable to interpret time setup')
-        K = int(np.ceil(K/dko)*dko)
-
-        # "State vars"
-        self._dt      = dt
-        self._dko   = dko
-        self._K       = K
+                 dko=None, Ko=None, K=None, Tplot=None,
+                 kko=None, kk=None):
+        
+        #Define time step. 
+        if dt is not None:
+            self._dt = dt
+        elif T and K:
+            self._dt = T/K 
+        elif dko and dto:
+            self._dt = dto/dko 
+        elif T and dko and Ko:
+            self._dt = T/(Ko+1)/dko 
+        elif T and kko:
+            self._dt = T/self.kko[-1]
+        else:
+            raise TypeError('Unable to derive dt.')
+        
+        #Define kk 
+        if K is not None:
+            self._K = K 
+        elif kk:
+            self._K = int(kk[-1])
+        elif T:
+            self._K = int(T / self.dt)
+        elif Ko and dto:
+            self._K = (Ko+1) * dto / dt
+        else:
+            raise TypeError('Unable to derive K.')
+        self.kk = np.arange(0, self.K+1, dtype=int)
+        
+        #Define kko 
+        if kko is not None:
+            self._kko = kko 
+        elif dko:
+            self._kko = self.kk[dko::dko]
+        elif dto:
+            dko = int(dto/dt)
+            self._kko = self.kk[dko::dko]
+        else:
+            raise TypeError('Unable to derive kko.')
+        
+        if Ko:
+            self.kko = self.kko[:Ko+1]
 
         # BurnIn, Tplot
-        if self.T <= BurnIn:
-            BurnIn = self.T / 2
+        if BurnIn is None:
+            self.BurnIn = 0.0
+        elif self.T <= BurnIn:
+            self.BurnIn = self.T / 2
             warning = "Warning: experiment duration < BurnIn time." \
                       "\nReducing BurnIn value."
             print(color_text(warning, colorama.Fore.RED))
-        self.BurnIn = BurnIn
+        else:
+            self.BurnIn = BurnIn
+            
         if Tplot is None:
-            Tplot = BurnIn
-        self.Tplot = Tplot  # don't enforce <T here
-
-        assert len(self.kko) == self.Ko+1
+            self.Tplot = BurnIn
+        else:
+            self.Tplot = Tplot
 
     ######################################
     # "State vars". Can be set (changed).
     ######################################
 
-    @property
-    def dt(self):
-        return self._dt
+    # @dt.setter
+    # def dt(self, value):
+    #     dko_new = self.dko * self.dt/value
+    #     if not np.isclose(int(dko_new), dko_new):
+    #         raise ValueError('New value is amgiguous with respect to dko')
+    #     dko_new = int(dko_new)
+    #     self.__init__(dt=value, K=K, kko=kko, dko=dko, BurnIn=self.BurnIn, Tplot=self.Tplot)
 
-    @dt.setter
-    def dt(self, value):
-        dko_new = self.dko * self.dt/value
-        if not np.isclose(int(dko_new), dko_new):
-            raise ValueError('New value is amgiguous with respect to dko')
-        dko_new = int(dko_new)
-        self.__init__(dt=value, dko=dko_new, T=self.T,
-                      BurnIn=self.BurnIn, Tplot=self.Tplot)
+    # @property
+    # def dko(self):
+    #     return self._dko
+    #
+    # @dko.setter
+    # def dko(self, value):
+    #     ratio = value/self.dko
+    #     self.__init__(dt=self.dt, dko=value, T=ratio*self.T,
+    #                   BurnIn=self.BurnIn, Tplot=self.Tplot)
 
-    @property
-    def dko(self):
-        return self._dko
+    # @property
+    # def K(self):
+    #     return self._K
 
-    @dko.setter
-    def dko(self, value):
-        ratio = value/self.dko
-        self.__init__(dt=self.dt, dko=value, T=ratio*self.T,
-                      BurnIn=self.BurnIn, Tplot=self.Tplot)
-
-    @property
-    def K(self):
-        return self._K
-
-    @K.setter
-    def K(self, value):
-        self.__init__(dt=self.dt, dko=self.dko, K=value,
-                      BurnIn=self.BurnIn, Tplot=self.Tplot)
+    # @K.setter
+    # def K(self, value):
+    #     self.__init__(dt=self.dt, dko=self.dko, K=value,
+    #                   BurnIn=self.BurnIn, Tplot=self.Tplot)
 
     ######################################
     # Read/write (though not state var)
     ######################################
-    @property
-    def T(self):
-        return self.dt*self.K
+    # @property
+    # def T(self):
+    #     return self.dt*self.K
 
-    @T.setter
-    def T(self, value):
-        self.__init__(dt=self.dt, dko=self.dko, T=value,
-                      BurnIn=self.BurnIn, Tplot=self.Tplot)
+    # @T.setter
+    # def T(self, value):
+    #     self.__init__(dt=self.dt, dko=self.dko, T=value,
+    #                   BurnIn=self.BurnIn, Tplot=self.Tplot)
 
-    @property
-    def Ko(self):
-        return int(self.K/self.dko)-1
-
-    @Ko.setter
-    def Ko(self, value):
-        self.__init__(dt=self.dt, dko=self.dko, Ko=value,
-                      BurnIn=self.BurnIn, Tplot=self.Tplot)
+    # @property
+    # def Ko(self):
+    #     return len(self.kko)-1
+    #
+    # @Ko.setter
+    # def Ko(self, value):
+    #     self.__init__(dt=self.dt, dko=self.dko, Ko=value,
+    #                   BurnIn=self.BurnIn, Tplot=self.Tplot)
 
     ######################################
     # Read-only
     ######################################
     @property
     def dto(self):
-        return self.dko*self.dt
-
+        return self.dko * self.dt
+        
     @property
-    def kk(self):
-        return np.arange(self.K+1)
-
+    def dko(self):
+        if np.all( np.mod(self.kko, self.kko[0])==0 ):
+            return self.kko[0]
+        else:
+            raise ValueError("Nonuniform observation timestep.")
+    
+    @property 
+    def dt(self):
+        return self._dt 
+    
     @property
+    def K(self):
+        return self._K
+    
+    @property 
     def kko(self):
-        return self.kk[self.dko::self.dko]
-
-    @property
+        return self._kko
+    
+    @property 
     def tt(self):
-        return self.kk * self.dt
-
-    @property
+        return self.kk * self.dt 
+    
+    @property 
     def tto(self):
-        return self.kko * self.dt
+        return self.kko * self.dt 
+    
+    @property
+    def Ko(self):
+        return len(self.kko)-1
+    
+    @property
+    def T(self):
+        return self.K * self.dt
 
     # Burn In. NB: uses > (strict inequality)
     @property
@@ -211,7 +244,7 @@ class Chronology():
 
         Also yields `t` and `dt`.
         """
-        for k in ko * self.dko + np.arange(1, self.dko+1):
+        for k in np.arange(0 if ko==0 else self.kko[ko-1], self.kko[ko])+1:
             t  = self.tt[k]
             dt = t - self.tt[k-1]
             yield k, t, dt
@@ -228,7 +261,7 @@ class Chronology():
     ######################################
     def copy(self):
         """Copy via state vars."""
-        return Chronology(dt=self.dt, dko=self.dko, K=self.K, BurnIn=self.BurnIn)
+        return Chronology(dt=self.dt, K=self.K, kko=self.kko, BurnIn=self.BurnIn, Tplot=self.Tplot)
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
