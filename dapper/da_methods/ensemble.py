@@ -11,8 +11,7 @@ from dapper.tools.linalg import mldiv, mrdiv, pad0, svd0, svdi, tinv, tsvd
 from dapper.tools.matrices import funm_psd, genOG_1
 from dapper.tools.progressbar import progbar
 from dapper.tools.randvars import GaussRV
- 
-
+from dapper.tools.inflation import Inflator
 from . import da_method
 
 def scatter(mpi, mat_in, row_in, mat_out, row_out):
@@ -47,8 +46,9 @@ def gather(mpi, mat_in, row_in, mat_out, row_out):
 class ens_method:
     """Declare default ensemble arguments."""
 
-    infl: float        = 1.0
+    infl: float        = Inflator()
     rot: bool          = False
+    univariate: bool   = False
     fnoise_treatm: str = 'Stoch'
 
 
@@ -77,7 +77,7 @@ def init_mpi_ensemble(object, HMM):
     
     return E, members, E_all, members_all, inan
 
-def init_save_ensemble(object, HMM, xx, yy, E):
+def init_save_ensemble(object, HMM, E, xx, yy):
     if object.mpi.is_root:
         object.save_nc.create_file()
         object.save_nc.create_dims(HMM, object.N)
@@ -98,39 +98,57 @@ class EnKF:
     mpi = multiproc.NoneMPI()
 
     def assimilate(self, HMM, xx, yy):
-        E, members, E_all, members_all, inan = init_mpi_ensemble(self, HMM)
+        from copy import copy 
+        
+        E1, members1, E, members, inan = init_mpi_ensemble(self, HMM)
         if hasattr(self,'save_nc'):
-            init_save_ensemble(self, HMM, xx, yy, E_all)
+            init_save_ensemble(self, HMM, E, xx, yy)
+            
+        Efor, Eana = [], []
+        if self.mpi.is_root:
+            active = members<inan
+            Efor.append(copy(E[active]))
         
         # Cycle
         for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
             
             #Run part of the ensemble on one the processes. 
-            E, members = scatter(self.mpi, E_all, members_all, E, members)
-            E[members<inan] = HMM.Dyn(E[members<inan], t-dt, dt, members[members<inan])
-            E_all, members_all = gather(self.mpi, E, members, E_all, members_all)                
+            E1, members1 = scatter(self.mpi, E, members, E1, members1)
+            E1[members1<inan] = HMM.Dyn(E1[members1<inan], t-dt, dt) #ip:, members1[members1<inan])
+            E, members = gather(self.mpi, E1, members1, E, members)        
             
             if self.mpi.is_root:                
-                active = members_all<inan
-                E_all[active] = add_noise(E_all[active], dt, HMM.Dyn.noise, 
-                                          self.fnoise_treatm)
+                active = members<inan
+                E[active] = add_noise(E[active], dt, HMM.Dyn.noise, 
+                                      self.fnoise_treatm)
                 
                 if hasattr(self,'save_nc'):
-                    self.save_nc.write_forecast(k, E_all[active])
+                    self.save_nc.write_forecast(k, E[active])
+                    
+                Efor.append(copy(E[active]))
 
                 # Analysis update
-                if ko is not None:                
-                    self.stats.assess(k, ko, 'f', E=E_all[active])
-                    E_all[active,:] = EnKF_analysis(E_all[active,:], HMM.Obs(E_all[active,:], t), HMM.Obs.noise, yy[ko],
-                                                  self.upd_a, self.stats, ko)
-                    E_all[active,:] = post_process(E_all[active,:], self.infl, self.rot)
+                if ko is not None and len(yy[ko])>0:                
+                    self.stats.assess(k, ko, 'f', E=E[active])
+                    E_ana = pre_process(t, HMM, E[active,:], yy[ko], 
+                                        self.infl, self.univariate)
+                    
+                    E_ana = EnKF_analysis(self.N, E_ana, HMM.Obs(E_ana, t), 
+                                          HMM.Obs.noise, yy[ko], self.upd_a, self.stats, ko)
+                    
+                    E[active,:] = post_process(E_ana, self.infl, self.rot, self.univariate,
+                                               time=t, HMM=HMM, y=yy[ko])
                     
                     if hasattr(self,'save_nc'):
-                        self.save_nc.write_analysis(ko, E_all[active])
+                        self.save_nc.write_analysis(ko, E[active])
+                        
+                    Eana.append(copy(E[active]))
 
-                self.stats.assess(k, ko, E=E_all[active])
+                self.stats.assess(k, ko, E=E[active])
+                
+        return np.array(Efor), np.array(Eana)
 
-def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
+def EnKF_analysis(N,E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     """Perform the EnKF analysis update.
 
     This implementation includes several flavours and forms,
@@ -139,7 +157,7 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     Main references: `bib.sakov2008deterministic`,
     `bib.sakov2008implications`, `bib.hoteit2015mitigating`
     """
-    N, Nx = E.shape      # Dimensionality
+    Nx = np.size(E,1)      # Dimensionality
     N1    = N-1          # Ens size - 1
 
     mu = np.mean(E, 0)   # Ens mean
@@ -197,7 +215,7 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
             trHK    = np.sum((s**2 + 1)**(-1.0)*s**2)
         else:  # 'eig' in upd_a:
             # Implementation using eig. val. decomp.
-            d, V   = sla.eigh(Y @ R.inv @ Y.T + N1*eye(N))
+            d, V   = sla.eigh(Y @ R.inv @ Y.T + N1*eye(np.size(E,0)))
             T      = V@diag(d**(-0.5))@V.T * sqrt(N1)
             Pw     = V@diag(d**(-1.0))@V.T
             HK     = R.inv @ Y.T @ (V @ diag(d**(-1)) @ V.T) @ Y
@@ -301,7 +319,18 @@ def EnKF_analysis(E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     return E
 
 
-def post_process(E, infl, rot):
+def pre_process(time, HMM, E, y, infl, univariate):
+    """Processing of background ensemble."""
+    if isinstance(infl, Inflator):
+        E = infl.inflate_for(HMM.Obs, E, time, y)
+        
+    if univariate:
+        E = multi2univariate(HMM,E)
+    
+    return E
+        
+def post_process(E, infl, rot, univariate=False, 
+                 HMM=None, y=None, time=None):
     """Inflate, Rotate.
 
     To avoid recomputing/recombining anomalies,
@@ -312,7 +341,16 @@ def post_process(E, infl, rot):
     - for readability;
     - to avoid inflating/rotationg smoothed states (for the `EnKS`).
     """
-    do_infl = infl != 1.0 and infl != '-N'
+    if univariate:
+        E = uni2multivariate(HMM,E)
+    
+    if isinstance(infl, (float,int)):
+        do_infl = infl != 1.0
+    elif isinstance(infl, Inflator):
+        E = infl.inflate_ana(HMM.Obs, E, time, y)
+        do_infl = False
+    else:
+        do_infl = False 
 
     if do_infl or rot:
         A, mu  = center(E)
@@ -334,13 +372,15 @@ def add_noise(E, dt, noise, method):
 
     Refs: `bib.raanes2014ext`
     """
-    if noise.C == 0:
+    if hasattr(noise,'C') and noise.C == 0:
         return E
 
     N, Nx = E.shape
     A, mu = center(E)
-    Q12   = noise.C.Left
-    Q     = noise.C.full
+    
+    if method not in ['Stoch', 'none']:
+        Q12   = noise.C.Left
+        Q     = noise.C.full
 
     def sqrt_core():
         T    = np.nan    # cause error if used
@@ -471,7 +511,8 @@ class EnKS:
                 EE    = EnKF_analysis(EE, Eo, HMM.Obs.noise, y,
                                       self.upd_a, self.stats, ko)
                 E[kk] = self.reshape_fr(EE, HMM.Dyn.M)
-                E[k]  = post_process(E[k], self.infl, self.rot)
+                E[k]  = post_process(E[k], self.infl, self.rot, self.univariate,
+                                     time=t, HMM=HMM, y=yy[ko])
                 self.stats.assess(k, ko, 'a', E=E[k])
 
         for k, ko, _, _ in progbar(HMM.tseq.ticker, desc='Assessing'):
@@ -508,7 +549,8 @@ class EnRTS:
                 y    = yy[ko]
                 E[k] = EnKF_analysis(E[k], Eo, HMM.Obs.noise, y,
                                      self.upd_a, self.stats, ko)
-                E[k] = post_process(E[k], self.infl, self.rot)
+                E[k] = post_process(E[k], self.infl, self.rot, self.univariate,
+                                    time=t, HMM=HMM, y=yy[ko])
                 self.stats.assess(k, ko, 'a', E=E[k])
 
         # Backward pass
@@ -618,7 +660,8 @@ class SL_EAKF:
                     A[:, ii] += np.outer(Y2 - Y_j, Regression)
                     E = mu + A
 
-                E = post_process(E, self.infl, self.rot)
+                E = post_process(E, self.infl, self.rot, self.univariate,
+                                 time=t, HMM=HMM, y=yy[ko])
 
             self.stats.assess(k, ko, E=E)
 
@@ -713,7 +756,8 @@ class LETKF:
                     E, stats = local_analyses(E, HMM.Obs(E, t), HMM.Obs.noise.C, yy[ko],
                                               batch, taper, pool.map, self.xN, self.g)
                     self.stats.write(stats, k, ko, "a")
-                    E = post_process(E, self.infl, self.rot)
+                    E = post_process(E, self.infl, self.rot, self.univariate,
+                                     time=t, HMM=HMM, y=yy[ko])
 
                 self.stats.assess(k, ko, E=E)
 
@@ -815,7 +859,7 @@ def Newton_m(fun, deriv, x0, is_inverted=False,
     return x0
 
 
-def hyperprior_coeffs(s, N, xN=1, g=0):
+def hyperprior_coeffs(s, N, xN=1, g=0, Nsize=None):
     r"""Set EnKF-N inflation hyperparams.
 
     The EnKF-N prior may be specified by the constants:
@@ -861,7 +905,10 @@ def hyperprior_coeffs(s, N, xN=1, g=0):
 
     # Mode correction (almost) as in eqn 36 of `bib.bocquet2015expanding`
     prior_mode = eN/cL                        # Mode of l1 (before correction)
-    diagonal   = pad0(s**2, N) + N1           # diag of Y@R.inv@Y + N1*I
+    
+    if Nsize is None:
+        Nsize=N
+    diagonal   = pad0(s**2, Nsize) + N1           # diag of Y@R.inv@Y + N1*I
     #                                           (Hessian of J)
     I_KH       = np.mean(diagonal**(-1))*N1   # ≈ 1/(1 + HBH/R)
     # I_KH      = 1/(1 + (s**2).sum()/N1)     # Scalar alternative: use tr(HBH/R).
@@ -928,12 +975,14 @@ class EnKF_N:
     g: int     = 0
 
     def assimilate(self, HMM, xx, yy):
-        R, N, N1 = HMM.Obs.noise.C, self.N, self.N-1
+        from copy import copy
 
         # Init        
         E1, members1, E0, members0, inan = init_mpi_ensemble(self, HMM)
         if hasattr(self,'save_nc'):
-            init_save_ensemble(self, HMM, xx, yy, E0)
+            init_save_ensemble(self, HMM, E0, xx, yy)
+            
+        Efor, Eana = [], []
 
         # Cycle
         for k, ko, t, dt in progbar(HMM.tseq.ticker, disable=not self.mpi.is_root):
@@ -946,17 +995,21 @@ class EnKF_N:
             if self.mpi.is_root:
                 E=E0[members0<inan] 
             else:
-                continue 
+                return Efor, Eana
             
             E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
             
             if hasattr(self,'save_nc'):
-                    self.save_nc.write_forecast(k, E) 
+                self.save_nc.write_forecast(k, E) 
 
             # Analysis
             if ko is not None:
                 self.stats.assess(k, ko, 'f', E=E)
+                E = pre_process(t, HMM, E, yy[ko], 
+                                self.infl, self.univariate)
+                
                 Eo = HMM.Obs(E, t)
+                R, N, N1 = HMM.Obs.noise.C, self.N, self.N-1
                 y  = yy[ko]
 
                 mu = np.mean(E, 0)
@@ -968,12 +1021,12 @@ class EnKF_N:
 
                 V, s, UT = svd0(Y @ R.sym_sqrt_inv.T)
                 du       = UT @ (dy @ R.sym_sqrt_inv.T)
-                def dgn_N(l1): return pad0((l1*s)**2, N) + N1
+                def dgn_N(l1): return pad0((l1*s)**2, np.size(E,0)) + N1
 
                 # Adjust hyper-prior
                 # xN_ = noise_level(self.xN, self.stats, HMM.tseq, N1, ko, A,
                 #                   locals().get('A_old', None))
-                eN, cL = hyperprior_coeffs(s, N, self.xN, self.g)
+                eN, cL = hyperprior_coeffs(s, N, self.xN, self.g, Nsize=np.size(E,0))
 
                 if self.dual:
                     # Make dual cost function (in terms of l1)
@@ -1018,9 +1071,9 @@ class EnKF_N:
 
                     def nvrs(w):
                         # inverse of Jpp-approx
-                        return (V * (pad0(s**2, N) + za(w)) ** -1.0) @ V.T
+                        return (V * (pad0(s**2, np.size(E,0)) + za(w)) ** -1.0) @ V.T
                     # Find w (optimize)
-                    wa     = Newton_m(Jp, nvrs, zeros(N), is_inverted=True)
+                    wa     = Newton_m(Jp, nvrs, zeros(np.size(E,0)), is_inverted=True)
                     # wa   = Newton_m(Jp,Jpp ,zeros(N))
                     # wa   = fmin_bfgs(J,zeros(N),Jp,disp=0)
                     l1     = sqrt(N1/za(wa))
@@ -1045,17 +1098,75 @@ class EnKF_N:
                     # Also include angular-radial co-dependence.
                     # Note: denominator not squared coz
                     # unlike `bib.bocquet2015expanding` we have inflated Y.
-                    Hw = Y@R.inv@Y.T/N1 + eye(N) - 2*np.outer(w, w)/(eN + w@w)
+                    Hw = Y@R.inv@Y.T/N1 + eye(np.size(E,0)) - 2*np.outer(w, w)/(eN + w@w)
                     T  = funm_psd(Hw, lambda x: x**-.5)  # is there a sqrtm Woodbury?
 
                 E = mu + w@A + T@A
-                E = post_process(E, self.infl, self.rot)
 
                 self.stats.infl[ko] = l1
                 self.stats.trHK[ko] = (((l1*s)**2 + N1)**(-1.0)*s**2).sum()/HMM.Ny
+                
+                E = post_process(E, self.infl, self.rot, self.univariate,
+                                 time=t, HMM=HMM, y=yy[ko])
 
+                Eana.append(copy(E))
                 if hasattr(self,'save_nc'):
                     self.save_nc.write_analysis(ko, E)
                     
+            Efor.append(copy(E))
             self.stats.assess(k, ko, E=E)
             E0[members0<inan]=E 
+            
+            return Efor, Eana
+            
+def multi2univariate(HMM, E):
+    """Convert multivariate ensemble into univariate ensemble.
+    
+    Parameters
+    ----------
+    HMM : HiddenMarkovModel object 
+        Object representing the model.
+    E : 2d Numpy array 
+        Array with rows representing ensemble members. 
+        
+    """
+    n_sectors = len(HMM.sectors)
+    n_members = np.size(E,0)
+    
+    x = np.mean(E, axis=0, keepdims=True)
+    E_multi = E - x
+    E_uni = np.zeros((n_members * n_sectors, np.size(E,1)))
+    
+    i_sectors = np.arange(0, n_members * n_sectors, n_members)
+    for i,sector in zip(i_sectors, HMM.sectors.values()):
+        E_uni[i:i+n_members,sector] = E_multi[:,sector]
+    #E_uni *= np.sqrt((n_members * n_sectors - 1)/(n_members - 1))
+    
+    return x + E_uni
+
+def uni2multivariate(HMM, E):
+    """Inverse of multi2univariate
+    
+    Parameters
+    ----------
+    HMM : HiddenMarkovModel object 
+        Object representing the model.
+    E : 2d Numpy array 
+        Array with rows representing ensemble members. 
+        
+    """
+    n_sectors = len(HMM.sectors)
+    n_members = int(np.size(E,0) / n_sectors)
+    
+    x = np.mean(E, axis=0, keepdims=True)
+    E_uni = E - x
+    E_multi = np.zeros((n_members, np.size(E,1)))
+    
+    i_sectors = np.arange(0, n_members * n_sectors, n_members)
+    for i,sector in zip(i_sectors, HMM.sectors.values()):
+        E_multi[:,sector] = E_uni[i:i+n_members,sector]
+    #E_multi *= np.sqrt((n_members - 1)/(n_members * n_sectors - 1))
+    
+    return x + E_multi
+    
+            
