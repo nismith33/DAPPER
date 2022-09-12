@@ -110,7 +110,7 @@ def da_method(*default_dataclasses):
             # Assimilate
             time0 = time.time()
             try:
-                _assimilate(self, HMM, xx, yy)
+                E = _assimilate(self, HMM, xx, yy)
             except Exception as ERR:
                 if fail_gently:
                     self.crashed = True
@@ -121,6 +121,9 @@ def da_method(*default_dataclasses):
                     # crop out errors in the DAPPER infrastructure itself.
                     raise
             self.stat("duration", time.time()-time0)
+            
+            if E is not None:
+                return E[0], E[1] #ip:
 
         # Overwrite the assimilate method with the new one
         try:
