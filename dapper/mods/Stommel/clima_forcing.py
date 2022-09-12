@@ -1,49 +1,68 @@
 # -*- coding: utf-8 -*-
 
-""" Test run with Stommel model. """
+""" Stommel model with perturbations in initial conditions, forcing and 
+unperturbed climate change.
+"""
 import numpy as np
 import dapper.mods as modelling
 import dapper.mods.Stommel as stommel
 from dapper.da_methods.ensemble import EnKF
 import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
 from copy import copy 
 import os
 
 def exp_clima_forcing(N=100, seed=1000):
+    #Time period over which climate change takes place
+    T_warming=100*stommel.year
+    #Data assimilation period in this or other experiments.
+    Tda = 20 * stommel.year
     # Timestepping. Timesteps of 1 day, running for 10 year.
     tseq = modelling.Chronology(stommel.year, 
                                 kko=np.array([],dtype=int), 
                                 T=200*stommel.year, BurnIn=0)  # 1 observation/year
-    # Create default Stommel model
+    #Create model
     model = stommel.StommelModel()
-    # Add melt
-    default_ep_flux = model.ep_flux[0]
-    model.ep_flux = [stommel.add_melt(default_ep_flux, model, sig_T=10) for n in range(N+1)]
-    # Add initial perturbation to surface temperature
-    temp_air_default = model.temp_air[0]
-    sigs = np.array([2.0, 2.0]) 
-    model.temp_air = [stommel.add_init_noise(temp_air_default, 10*n+100+seed, sigs) for n in range(N+1)]
-    model.temp_air = [stommel.add_warming(f, sigs=[.5, 1.]) for f in model.temp_air]
-    # Add initial perturbation to surface salinity
-    sigs = np.array([0.2, 0.2]) 
-    salt_air_default = model.salt_air[0]
-    model.salt_air = [stommel.add_init_noise(salt_air_default, 10*n+150+seed, sigs) for n in range(N+1)]
+    #Heat air fluxes 
+    functions = stommel.default_air_temp(N)
+    trend = interp1d(np.array([0.,T_warming]), np.array([[0.,6.],[0.,3.]]), 
+                     fill_value='extrapolate', axis=1)
+    trended = [stommel.add_functions(func, trend) for func in functions]
+    noised = [stommel.add_noise(func, seed=seed+n*20+1, sig=np.array([2.,2.])) 
+              for n,func in enumerate(trended)]
+    functions = [stommel.merge_functions(Tda, noised[0], func) 
+                 for func in noised]
+    model.fluxes.append(stommel.TempAirFlux(functions))
+    #Salinity air fluxes 
+    functions = stommel.default_air_salt(N)
+    noised = [stommel.add_noise(func, seed=seed+n*20+2, sig=np.array([.2,.2])) 
+              for n,func in enumerate(functions)]
+    functions = [stommel.merge_functions(Tda, noised[0], func) 
+                 for func in noised]
+    model.fluxes.append(stommel.SaltAirFlux(functions))
+    #Melt flux 
+    melt_rate = -stommel.V_ice * np.array([1.0/(model.dx[0,0]*model.dy[0,0]), 0.0]) / T_warming #ms-1
+    functions = stommel.default_air_ep(N)
+    functions = [stommel.merge_functions(T_warming, lambda t:func(t)+melt_rate, func)
+                 for func in functions]
+    model.fluxes.append(stommel.EPFlux(functions))
     # Initial conditions
     x0 = model.x0
-    #Variance Ocean temp[2], ocean salinity[2], temp diffusion parameter,
-    #salt diffusion parameter, transport parameter
-    B = np.append(np.array([0.5, 0.5, 0.05, 0.05]), 0.3*x0[4:])**2 
-    X0 = modelling.GaussRV(C=B, mu=x0)
+    #Variance in initial conditions and parameters.
+    B = stommel.State().zero()
+    B.temp += 0.5**2 #C2
+    B.salt += 0.05**2 #ppt2
+    B.temp_diff += (0.3*model.init_state.temp_diff)**2
+    B.salt_diff += (0.3*model.init_state.salt_diff)**2
+    B.gamma += (0.3*model.init_state.gamma)**2
+    X0 = modelling.GaussRV(C=B.to_vector(), mu=x0)
     # Dynamisch model. All model error is assumed to be in forcing.
     Dyn = {'M': model.M,
            'model': model.step,
            'noise': 0
            }
-    # Observational variances
-    R = B[:4]  # C2,C2,ppt2,ppt2
     # Observation
     Obs = model.obs_ocean()
-    Obs['noise'] = modelling.GaussRV(C=R, mu=np.zeros_like(R))
     # Create model.
     HMM = modelling.HiddenMarkovModel(Dyn, Obs, tseq, X0)
     # Create DA
@@ -63,7 +82,9 @@ if __name__=='__main__':
     fig, ax = stommel.time_figure(HMM.tseq)    
     for n in range(np.size(Efor,1)):
         stommel.plot_truth(ax, Efor[:,n,:], yy)
-    stommel.plot_eq(ax, HMM.tseq, stommel.StommelModel(), stommel.prob_change(Efor) * 100.)
+        
+    model.ens_member=0
+    stommel.plot_eq(ax, HMM.tseq, model, stommel.prob_change(Efor) * 100.)
     
     #Save figure 
     fig.savefig(os.path.join(stommel.fig_dir, 'clima_forcing.png'),
