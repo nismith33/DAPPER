@@ -104,6 +104,16 @@ def plot_error(ax, errors):
         
     return draws
 
+def plot_perror(ax, errors):
+    
+    ax.set_ylabel('RMSE probability')
+    ax.set_ylim(0,1)
+    
+    for key in errors:
+        x=np.arange(0, np.size(errors[key],1))
+        vals = np.mean(np.abs(np.array(errors[key])), axis=0)
+        ax.plot(x, vals, label=key)
+
 def plot_spreads(ax, spreads):
     draws = []
     ax = np.reshape(ax,(-1))
@@ -133,6 +143,16 @@ def plot_spreads(ax, spreads):
         
     return draws
 
+def plot_pspread(ax, spreads):
+    
+    ax.set_ylabel('Spread probability')
+    ax.set_ylim(0,1)
+    
+    for key in errors:
+        x=np.arange(0, np.size(errors[key],1))
+        vals = np.sqrt(np.mean(np.array(spreads[key]), axis=0))
+        ax.plot(x, vals, label=key)
+
     
 def plot_ensemble(filename, xx, yy, Efor):
     plt.close('all')
@@ -145,7 +165,7 @@ def plot_ensemble(filename, xx, yy, Efor):
         ax1.set_xlabel('Time [year]')
         ax1.set_xlim(0,200)
     ax[0].set_ylabel("Temperature difference [C]")
-    ax[0].set_ylim(4,18)
+    ax[0].set_ylim(-4,18)
     ax[1].set_ylabel("Salinity difference [ppt]")
     ax[1].set_ylim(0,4)
     
@@ -208,16 +228,36 @@ def plot_confusion_matrix(matrix):
         
     return fig, ax
 
+def plot_entropy(entropy):
+    plt.close('all')
+    fig = plt.figure(figsize=(6,4))
+    ax = fig.subplots(1,1)
+    
+    ax.set_xlabel('Time [year]')
+    ax.set_ylabel('Cross entropy')
+    ax.grid()
+    ax.set_xlim(0,200)
+    
+    for key in entropy:
+        x=np.arange(0, np.size(entropy[key],1))
+        ax.plot(x, np.mean(np.array(entropy[key]), axis=0), label=key)
+        
+    ax.legend(framealpha=1.)
+        
+
 if __name__=='__main__':
-    NG = 20  #number of instances
+    NG = 50  #number of instances
     N  = 50 #ensemble members per instant
     
-    prob_flip, errors, spread, cmatrix={}, {}, {}, {}
+    prob_flip, errors, spread, cmatrix, perrors, pspread, pentropy={}, {}, {}, {}, {}, {}, {}
     for key in ['ref','ref_da','clima','clima_da']:
         prob_flip[key] = []    
         errors[key] = []
         spread[key] = []
         cmatrix[key] = np.zeros((2,2))
+        perrors[key] = []
+        pspread[key] = []
+        pentropy[key] = []
     
     seed=1000
     for ng in range(NG):
@@ -227,7 +267,9 @@ if __name__=='__main__':
         xp, HMM, model = exp_ref_forcing(N, seed)
         xx, yy = HMM.simulate()
         Efor, Eana = xp.assimilate(HMM, xx, yy)
-        prob_flip['ref'].append(stommel.prob_change(Efor) * 100.)
+        perrors['ref'].append(stommel.error_prob(xx, Efor))
+        pspread['ref'].append(stommel.spread_prob(Efor))
+        pentropy['ref'].append(stommel.cross_entropy(xx,Efor))
         errors['ref'].append(np.mean(Efor,axis=1)-xx)
         spread['ref'].append(np.var(Efor,axis=1,ddof=1))
         cmatrix['ref']=confusion_matrix(cmatrix['ref'], xx, Efor)
@@ -237,7 +279,9 @@ if __name__=='__main__':
         xp, HMM, model = exp_ref_forcing_da(N, seed)
         xx, yy = HMM.simulate()
         Efor, Eana = xp.assimilate(HMM, xx, yy)
-        prob_flip['ref_da'].append(stommel.prob_change(Efor) * 100.)
+        perrors['ref_da'].append(stommel.error_prob(xx, Efor))
+        pspread['ref_da'].append(stommel.spread_prob(Efor))
+        pentropy['ref_da'].append(stommel.cross_entropy(xx,Efor))
         errors['ref_da'].append(np.mean(Efor,axis=1)-xx)
         spread['ref_da'].append(np.var(Efor,axis=1,ddof=1))
         cmatrix['ref_da']=confusion_matrix(cmatrix['ref_da'], xx, Efor)
@@ -247,7 +291,9 @@ if __name__=='__main__':
         xp, HMM, model = exp_clima_forcing_da(N, seed)
         xx, yy = HMM.simulate()
         Efor, Eana = xp.assimilate(HMM, xx, yy)
-        prob_flip['clima_da'].append(stommel.prob_change(Efor) * 100.)
+        perrors['clima_da'].append(stommel.error_prob(xx, Efor))
+        pspread['clima_da'].append(stommel.spread_prob(Efor))
+        pentropy['clima_da'].append(stommel.cross_entropy(xx,Efor))
         errors['clima_da'].append(np.mean(Efor,axis=1)-xx)
         spread['clima_da'].append(np.var(Efor,axis=1,ddof=1))
         cmatrix['clima_da']=confusion_matrix(cmatrix['clima_da'], xx, Efor)
@@ -257,7 +303,9 @@ if __name__=='__main__':
         xp, HMM, model = exp_clima_forcing(N, seed)
         xx, yy = HMM.simulate()
         Efor, Eana = xp.assimilate(HMM, xx, yy)
-        prob_flip['clima'].append(stommel.prob_change(Efor) * 100.)
+        perrors['clima'].append(stommel.error_prob(xx, Efor))
+        pspread['clima'].append(stommel.spread_prob(Efor))
+        pentropy['clima'].append(stommel.cross_entropy(xx,Efor))
         errors['clima'].append(np.mean(Efor,axis=1)-xx)
         spread['clima'].append(np.var(Efor,axis=1,ddof=1))
         cmatrix['clima']=confusion_matrix(cmatrix['clima'], xx, Efor)
@@ -268,21 +316,21 @@ if __name__=='__main__':
     #fig,ax = prob_figure() 
     #for n, key in enumerate(prob_flip):
     #    plot_prob(ax, n+1, prob_flip[key])
-    
-    #Save figure 
     #fig.savefig(os.path.join(stommel.fig_dir, 'probabilities.png'),
     #            format='png', dpi=500)
     
     #Plot errors
     fig, ax = error_figure()
     plot_error(ax, errors)
+    plot_perror(ax[0,2], perrors)
     #Save figure 
-    #fig.savefig(os.path.join(stommel.fig_dir, 'rmse_time.png'),
-    #            format='png', dpi=500)
+    fig.savefig(os.path.join(stommel.fig_dir, 'rmse_time.png'),
+                format='png', dpi=500)
     
-    #Plot errors
+    #Plot spread
     fig, ax = error_figure()
     plot_spreads(ax, spread)
+    plot_pspread(ax[0,2], pspread)
     #Save figure 
     fig.savefig(os.path.join(stommel.fig_dir, 'spread_time.png'),
                 format='png', dpi=500)
@@ -290,6 +338,11 @@ if __name__=='__main__':
     fig,ax = plot_confusion_matrix(cmatrix)
     fig.savefig(os.path.join(stommel.fig_dir, 'confusion_matrix.png'),
                 format='png', dpi=500)
+    
+    plot_entropy(pentropy)
+    plt.savefig(os.path.join(stommel.fig_dir, 'entropy.png'),
+                format='png', dpi=500)
+
     
     
     
