@@ -621,8 +621,45 @@ def prob_change(E):
     
     return float((TH0-TH)/TH0)
 
+def error_prob(xx, E):
+    errors = []
+    E = np.mean(E, axis=1)
+    
+    xx = array2states(xx)
+    E = array2states(E)
+    pxx = np.array([xx1.regime!='TH' for xx1 in xx], dtype=int)
+    pE = np.array([E1.regime!='TH' for E1 in E], dtype=int)
+    
+    return pE-pxx
 
+def spread_prob(E):
+    spreads = []
+    
+    for E1 in E:
+        x = np.mean(E1, axis=0)
+        x = array2states(np.reshape(x, (1,-1)))
+        states = array2states(E1)
         
+        px = x[0].regime!='TH'
+        pE = np.array([s.regime!='TH' for s in states], dtype=int)
+        
+        spreads.append(np.var(pE, ddof=1))
+        
+    return spreads
+
+def cross_entropy(xx, E):       
+    xx = array2states(xx)
+    pSA = np.array([xx1.regime!='TH' for xx1 in xx], dtype=int)
+   
+    qSA = []
+    for E1 in E:
+        states = array2states(E1)
+        qSA.append( np.mean([s.regime!='TH' for s in states]) )
+    qSA = np.array(qSA, dtype=float)
+    
+    entropy = -pSA * np.log(qSA + 1e-14) -(1-pSA) * np.log((1-qSA) + 1e-14)
+        
+    return entropy
         
     
     
