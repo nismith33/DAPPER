@@ -39,8 +39,8 @@ class LinearEquationState:
     rho_ref: float = 1027 #kg m-3
     T_ref: float = 10.0 #C
     S_ref: float = 35.0 #ppt
-    alpha_T: float =  0.15 / rho_ref #kg m-3 K-1 / (kgm-3)
-    alpha_S: float =  0.78 / rho_ref #kg m-3 ppt-1 /(kgm-3
+    alpha_T: float =  1.67e-4 #K-1
+    alpha_S: float =  0.78e-3  #ppt-1
     
     def __call__(self, T, S):
         """ Linear equation of state. 
@@ -236,8 +236,8 @@ class StommelModel:
     
     #Geometry of basin 
     dz: np.ndarray = np.array([[3.65e3, 3.65e3]]) #m depth
-    dy: np.ndarray = np.array([[5.2e6, 5.2e6]]) #m latitude
-    dx: np.ndarray = np.array([[4.8e6, 4.8e6]]) #m longitude 
+    dy: np.ndarray = np.array([[3.0e6, 3.0e6]]) #m meridional
+    dx: np.ndarray = np.array([[4.8e6, 4.8e6]]) #m zonal
     V: np.ndarray = dx * dy * dz
     
     #Time
