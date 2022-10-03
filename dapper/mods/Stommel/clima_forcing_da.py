@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from copy import copy 
 import os
 
-def exp_clima_forcing_da(N=10, seed=1000):
+def exp_clima_forcing_da(N=100, seed=1000):
     #Time period for DA
     Tda = 20*stommel.year
     #Time period over which climate change takes place
