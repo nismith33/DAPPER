@@ -1,30 +1,6 @@
+## Credits
 
-<!--
-!      ___   _   ___ ___ ___ ___
-!     |   \ /_\ | _ \ _ \ __| _ \
-!     | |) / _ \|  _/  _/ _||   /
-!     |___/_/ \_\_| |_| |___|_|_\
-!
-!
--->
-
-<img src="/docs/imgs/logo_wtxt.png" align="left" width="250"/>
-
-DAPPER is a set of templates for **benchmarking** the performance of
-**data assimilation** (DA) methods.
-The tests provide experimental support and guidance for
-new developments in DA.
-The typical set-up is a **synthetic (twin) experiment**, where you
-specify a dynamic model and an observational model,
-and use these to generate a synthetic truth (multivariate time series),
-and then estimate that truth given the models and noisy observations.
-
-<!-- Badges / shields -->
-[![Github CI](https://img.shields.io/github/workflow/status/nansencenter/DAPPER/superintendent?logo=github&style=for-the-badge)](https://github.com/nansencenter/DAPPER/actions)
-[![Coveralls](https://img.shields.io/coveralls/github/nansencenter/DAPPER?style=for-the-badge&logo=coveralls)](https://coveralls.io/github/nansencenter/DAPPER?branch=master)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?style=for-the-badge&logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![PyPI - Version](https://img.shields.io/pypi/v/dapper.svg?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.python.org/pypi/dapper/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dw/dapper?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/dapper)
+This repository is a fork of the official [NANSEN DAPPER repository](https://github.com/nansencenter/DAPPER). This fork is in no way endoresed by or associated with the NANSEN center or the original developpers. Compared to the main code it contains an implementation of the Stommel model in branches [stommel](https://github.com/ivopasmans-reading/DAPPER/tree/stommel) and  [alt_constants](https://github.com/ivopasmans-reading/DAPPER/tree/alt_constants), support for time-varying observation operator and  more flexibility in implementating localization. For the latest version of the main code, please clone from [original repository](https://github.com/nansencenter/DAPPER).
 
 ## Getting started
 
