@@ -14,14 +14,17 @@ import os
 
 # Number of ensemble members
 N = 100
-# Timestepping. Timesteps of 1 day, running for 10 year.
+# Timestepping. Timesteps of 1 day, running for 200 year.
 kko = np.array([])
 tseq = modelling.Chronology(stommel.year, kko=kko, 
                             T=200*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
+#Switch on heat exchange with atmosphere. Assume stationary air temperatures. 
 model.fluxes.append(stommel.TempAirFlux(stommel.default_air_temp(N)))
+#Switch on salinity exchange with atmosphere. Assume stationary air salinity. 
 model.fluxes.append(stommel.SaltAirFlux(stommel.default_air_salt(N)))
+#Use default initial conditions.
 default_init = model.init_state
 # Initial conditions
 x0 = model.init_state.to_vector()
@@ -36,7 +39,7 @@ Dyn = {'M': model.M,
        'model': model.step,
        'noise': 0
        }
-# Observation
+#Default observations. 
 Obs = model.obs_ocean()
 # Create model.
 HMM = modelling.HiddenMarkovModel(Dyn, Obs, tseq, X0)
@@ -47,10 +50,10 @@ for n in range(N):
     xx,yy=HMM.simulate()
     stommel.plot_truth(ax, xx, yy)
     
+#Plot equilibria values based on unperturbed initial conditions.
 model.ens_member=0
 stommel.plot_eq(ax, tseq, model)
     
-
 #Save figure 
 fig.savefig(os.path.join(stommel.fig_dir,'ocean_noise.png'),format='png',dpi=500)
 

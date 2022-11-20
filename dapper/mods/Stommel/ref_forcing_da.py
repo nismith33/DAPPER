@@ -12,26 +12,31 @@ from copy import copy
 import os
 
 def exp_ref_forcing_da(N=100, seed=1000):
-    # Timestepping. Timesteps of 1 day, running for 10 year.
+    # Timestepping. Timesteps of 1 day, running for 200 year.
     Tda = 20 * stommel.year #time period over which DA takes place. 
     kko = np.arange(1, int(Tda/stommel.year)+1)
     tseq = modelling.Chronology(stommel.year, kko=kko, 
                                 T=200*stommel.year, BurnIn=0)  # 1 observation/year
     # Create default Stommel model
     model = stommel.StommelModel()
-    #Heat air fluxes 
+    #Switch on heat exchange with atmosphere. 
+    #Start with default stationary atm. temperature.
     functions = stommel.default_air_temp(N)
+    #Add white noise with std dev of 2C over both pole and equator basin separately. 
     noised = [stommel.add_noise(func, seed=seed+n*20+1, sig=np.array([2.,2.])) 
               for n,func in enumerate(functions)]
     functions = [stommel.merge_functions(Tda, noised[0], func2) 
                  for func2 in noised]
+    #Switch on the atm. heat fluxes. 
     model.fluxes.append(stommel.TempAirFlux(functions))
     #Salinity air fluxes 
     functions = stommel.default_air_salt(N)
+    #Add white with std dev. of .2 ppt. 
     noised = [stommel.add_noise(func, seed=seed+n*20+2, sig=np.array([.2,.2])) 
               for n,func in enumerate(functions)]
     functions = [stommel.merge_functions(Tda, noised[0], func2) 
                  for func2 in noised]
+    #Switch on salinity fluxes. 
     model.fluxes.append(stommel.SaltAirFlux(functions))
     # Initial conditions
     x0 = model.x0
@@ -70,6 +75,7 @@ if __name__=='__main__':
     for n in range(np.size(Efor,1)):
         stommel.plot_truth(ax, Efor[:,n,:], yy)
         
+    #Add equilibrium based on unperturbed initial conditions. 
     model.ens_member=0
     stommel.plot_eq(ax, HMM.tseq, model, stommel.prob_change(Efor) * 100.)
     

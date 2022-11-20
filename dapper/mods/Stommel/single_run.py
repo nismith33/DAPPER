@@ -12,17 +12,20 @@ import os
 
 # Number of ensemble members
 N = 0
-# Timestepping. Timesteps of 1 day, running for 10 year.
+# Timestepping. Timesteps of 1 day, running for 400 year.
 tseq = modelling.Chronology(stommel.year*10, kko=np.array([],dtype=int), 
                             T=400*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
+#Switch on heat exchange with atmosphere. Assume stationary air temperatures. 
 model.fluxes.append(stommel.TempAirFlux(stommel.default_air_temp(N)))
+#Switch on salinity exchange with atmosphere. Assume stationary air salinity. 
 model.fluxes.append(stommel.SaltAirFlux(stommel.default_air_salt(N)))
-# Initial conditions
+# Adjust default initial conditions.
 x0 = model.init_state
 x0.temp += np.array([[-1.,1.]])
 x0.salt += np.array([[0.,.4]]) #Move initial state away from equilibrium
+#Set initial conditions. 
 x0 = x0.to_vector()
 X0 = modelling.GaussRV(C=np.zeros_like(x0), mu=x0)
 #Print model information. 
