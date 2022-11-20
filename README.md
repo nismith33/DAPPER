@@ -1,6 +1,6 @@
 ## Credits
 
-This repository is a fork of the official [NANSEN DAPPER repository](https://github.com/nansencenter/DAPPER). This fork is in no way endoresed by or associated with the NANSEN center or the original developpers. Compared to the main code it contains an implementation of the Stommel model in branches [stommel](https://github.com/ivopasmans-reading/DAPPER/tree/stommel) and  [alt_constants](https://github.com/ivopasmans-reading/DAPPER/tree/alt_constants), support for time-varying observation operator and  more flexibility in implementating localization. For the latest version of the main code, please clone from [original repository](https://github.com/nansencenter/DAPPER).
+This repository is a fork of the official [NANSEN DAPPER repository](https://github.com/nansencenter/DAPPER). This fork is in no way endoresed by or associated with the NANSEN center or the original developpers. Compared to the main code it contains an implementation of the Stommel model in branches [stommel](https://github.com/ivopasmans-reading/DAPPER/tree/stommel) and  [alt_constants](https://github.com/ivopasmans-reading/DAPPER/tree/alt_constants), support for time-varying observation operator and  more flexibility in implementating localization. For the latest version of the main code, please clone from [original repository](https://github.com/nansencenter/DAPPER). Stommel contributions were provided by Ivo Pasmans in support of the M@thHub Workshop. Funding for my position is kindly provided by Schmidt Futures. 
 
 ## Getting started
 
