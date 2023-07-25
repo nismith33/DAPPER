@@ -24,6 +24,12 @@ model = stommel.StommelModel()
 model.fluxes.append(stommel.TempAirFlux(stommel.default_air_temp(N)))
 #Switch on salinity exchange with atmosphere. Assume stationary air salinity. 
 model.fluxes.append(stommel.SaltAirFlux(stommel.default_air_salt(N)))
+#Add additional periodic forcing 
+Omega = 2 * np.pi / (100 * stommel.year) #angular period 
+temp_forcings = [lambda time : 1e-5 * np.array([-.5,.5]) * np.sin(Omega * time)]
+model.fluxes.append(stommel.FunctionTempFlux(temp_forcings))
+salt_forcings = [lambda time : 1e-6 * np.array([-.5,.5]) * np.sin(Omega * time)]
+model.fluxes.append(stommel.FunctionSaltFlux(salt_forcings))
 #Use default initial conditions.
 default_init = model.init_state
 # Initial conditions

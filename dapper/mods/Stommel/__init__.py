@@ -190,6 +190,32 @@ class AdvectiveFlux(Flux):
         flux.temp[:,:-1] += trans * (state.temp[:,:-1] - state.temp[:,1:])
         flux.salt[:,:-1] += trans * (state.salt[:,:-1] - state.salt[:,1:])
         return flux
+
+class FunctionTempFlux(Flux):
+    """ Class representing a prescripted surface heat flux. """
+    
+    def __init__(self, functions):
+        super().__init__()
+        self.functions = functions 
+        
+    def top(self, state):
+        n = np.mod(self.ens_member, len(self.functions))
+        flux = State().zero()
+        flux.temp[0] += self.functions[n](state.time)
+        return flux
+    
+class FunctionSaltFlux(Flux):
+    """ Class representing a prescripted surface salinity flux. """
+    
+    def __init__(self, functions):
+        super().__init__()
+        self.functions = functions 
+        
+    def top(self, state):
+        n = np.mod(self.ens_member, len(self.functions))
+        flux = State().zero()
+        flux.salt[0] += self.functions[n](state.time)
+        return flux
     
 class TempAirFlux(Flux):
     """Class representing heat flux through top of ocean."""
@@ -458,7 +484,6 @@ class StommelModel:
         roots = [q1 for q1,f1 in zip(q,fq) if f1<0.]
         
         return np.array(roots) * self.trans_scale(state) 
-    
     
 def default_air_temp(N):
     """ Unperturbed air temperature. """
