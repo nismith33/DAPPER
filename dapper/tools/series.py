@@ -115,7 +115,7 @@ class StatPrint(NicePrint):
     """Set `NicePrint` options suitable for stats."""
 
     printopts = dict(
-        excluded=NicePrint.printopts["excluded"]+["HMM", "LP_instance"],
+        excluded=list(NicePrint.printopts["excluded"])+["HMM", "LP_instance"],
         ordering="linenumber",
         reverse=True,
         indent=2,
