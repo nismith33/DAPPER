@@ -17,6 +17,48 @@ mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365 #convert year to seconds
 func_type = type(lambda:0.0)
 
+def budd_forcing(model, state, Omega, B, Bhat, epsilon=0.0):
+    """Create forcing functions based on 
+    
+    Budd, C, Griffith, C & Kuske, R 2022, 'Dynamic tipping in the non-smooth Stommel-box model, with fast
+    oscillatory forcing', Physica D: Nonlinear Phenomena, vol. 432, 132948.
+    https://doi.org/10.1016/j.physd.2021.132948
+    
+    Parameters
+    ----------
+    model : StommelModel object
+        Object that contains parameters model like volume. 
+    state : State object
+        Object that contains state parameters like diffusion coefficients. 
+    Omega : float 
+        Nondimensional angular frequency periodic forcing. See Budd et al. 
+    B : float 
+        Nondimensional amplitude eta_2. See Budd et al. 
+    Bhat : float 
+        Nondimensional amplitude eta_1. See Budd et al. 
+    epsilon : float 
+        Nondimensional change rate eta_1. See Budd et al. 
+    
+    """
+    #Dimensionless -> dimensional
+    Omega = Omega / model.time_scale(state)
+    #amplitude temperature change due to periodic change eta1
+    B    = B    * model.temp_scale(state) 
+    #amplitude salinity change due to periodic change eta2
+    Bhat = Bhat * model.salt_scale(state) / model.eta3(state)
+    #rate salinity change due to  
+    epsilon = epsilon * model.salt_scale(state) / model.eta3(state) #linear change eta2
+    epsilon = epsilon / model.time_scale(state) #linear change eta2
+    
+    #Forcing surface temperature to achieve fluctuations eta1
+    temp_forcings = [lambda time : np.array([-.5,.5]) * B * np.sin(Omega * time)]
+    #Forcing surface salinity to achieve fluctuations eta2
+    salt_forcings = [lambda time : np.array([-.5,.5]) * Bhat * np.sin(Omega * time) 
+                     - np.array([-0.5,0.5]) * epsilon * time]
+    
+    return temp_forcings, salt_forcings 
+    
+
 def sample2linear(model):
     """Convert observation functional into matrix operator."""
     
@@ -112,7 +154,7 @@ class State:
           
     @property
     def regime(self):
-        """Return the regime for circulation."""
+        """~/eturn the regime for circulation."""
         
         rho = StommelModel.eos(self.temp[0], self.salt[0])
         if np.diff(rho)<=0:
@@ -447,6 +489,10 @@ class StommelModel:
         R_T = np.mean(state.temp_diff * mm2m / self.dz[0])
         V = np.prod(self.V[0]) / np.sum(self.V[0])
         return R_T * V
+    
+    def time_scale(self, state):
+        """ Factor to transform nondimensional time to dimensional time. """
+        return 1 / np.mean(state.temp_diff * mm2m / self.dz[0])
 
     @property        
     def x0(self):

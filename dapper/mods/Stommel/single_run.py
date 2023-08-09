@@ -17,20 +17,18 @@ tseq = modelling.Chronology(stommel.year*10, kko=np.array([],dtype=int),
                             T=400*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
+# Adjust default initial conditions.
+x0 = model.init_state
+x0.temp += np.array([[-1.,1.]])
+x0.salt += np.array([[0.,.4]]) #Move initial state away from equilibrium
 #Switch on heat exchange with atmosphere. Assume stationary air temperatures. 
 model.fluxes.append(stommel.TempAirFlux(stommel.default_air_temp(N)))
 #Switch on salinity exchange with atmosphere. Assume stationary air salinity. 
 model.fluxes.append(stommel.SaltAirFlux(stommel.default_air_salt(N)))
 #Add additional periodic forcing 
-Omega = 2 * np.pi / (100 * stommel.year) #angular period 
-temp_forcings = [lambda time : 1e-5 * np.array([-.5,.5]) * np.sin(Omega * time)]
+temp_forcings, salt_forcings = stommel.budd_forcing(model, x0, 100., .1, .1)
 model.fluxes.append(stommel.FunctionTempFlux(temp_forcings))
-salt_forcings = [lambda time : 1e-6 * np.array([-.5,.5]) * np.sin(Omega * time)]
 model.fluxes.append(stommel.FunctionSaltFlux(salt_forcings))
-# Adjust default initial conditions.
-x0 = model.init_state
-x0.temp += np.array([[-1.,1.]])
-x0.salt += np.array([[0.,.4]]) #Move initial state away from equilibrium
 #Set initial conditions. 
 x0 = x0.to_vector()
 X0 = modelling.GaussRV(C=np.zeros_like(x0), mu=x0)
