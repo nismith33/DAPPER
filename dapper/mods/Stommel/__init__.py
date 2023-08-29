@@ -107,9 +107,12 @@ class LinearEquationState:
 #Meriodional overturning 
 Q_overturning = 18e6 #m3s-1
 #Estimated depth mixed layer
-mixing_depth = 50.0 #m
+mixing_depth = 450.0 #m (based on 2019 Hadley data)
 #Estimated overturning
-gamma_ref = Q_overturning * LinearEquationState().rho_ref / (1027.5-1026.5) / (4.8e6 * 3.65e3) #m6/kg   
+eos = LinearEquationState()
+rho_pole = eos(3.42091822,5.44733642) * 1.74591451e+09
+rho_eq = eos(5.44733642, 34.7274021) * 6.88146469e+09
+gamma_ref = Q_overturning * eos.rho_ref / (rho_pole - rho_eq)
 #Ice volume greenland ice sheet 
 V_ice = 1710000 * 2 * 1e9 #m3
 
@@ -119,9 +122,9 @@ class State:
     """Class containing all attributes that make up a physical state."""
     
     #temperature in ocean basin
-    temp: np.ndarray = np.array([[ 7.0, 17.0]]) #C 6,18
+    temp: np.ndarray = np.array([[3.42091822, 5.44733642]]) #C 6,18
     #salinity in ocean basis
-    salt: np.ndarray = np.array([[35.0, 36.1]]) #ppt 35,36.5
+    salt: np.ndarray = np.array([[34.9256028, 34.7274021]]) #ppt 35,36.5
     #surface salinity flux coefficient
     salt_diff: float = 3e-5 / mixing_depth / mm2m #m2/s/m = 1e3 mm/s
     #surface heat flux coefficient
@@ -309,9 +312,9 @@ class StommelModel:
     """Class containing all attributes and methods to represent the Stommel model."""
     
     #Geometry of basin 
-    dz: np.ndarray = np.array([[3.65e3, 3.65e3]]) #m depth
-    dy: np.ndarray = np.array([[5.2e6, 5.2e6]]) #m latitude
-    dx: np.ndarray = np.array([[4.8e6, 4.8e6]]) #m longitude 
+    dz: np.ndarray = np.array([[5190.58094298, 5190.58102035]]) #m depth
+    dy: np.ndarray = np.array([[20938692., 19258160.]]) #m latitude
+    dx: np.ndarray = np.array([[ 336362.0625, 1325760.    ]]) #m longitude 
     V: np.ndarray = dx * dy * dz
     
     #Time
@@ -539,11 +542,11 @@ class StommelModel:
     
 def default_air_temp(N):
     """ Unperturbed air temperature. """
-    return np.array([lambda t: np.array([8.5, 26.0 ]) for _ in range(N+1)], dtype=func_type)
+    return np.array([lambda t: np.array([ 5.9034582 , 11.52102703]) for _ in range(N+1)], dtype=func_type)
     
 def default_air_salt(N):
     """ Unperturbed air salinity."""
-    return np.array([lambda t: np.array([32.8, 36.6]) for _ in range(N+1)], dtype=func_type)
+    return np.array([lambda t: np.array([35.03041687, 35.37372758]) for _ in range(N+1)], dtype=func_type)
 
 def default_air_ep(N, ep=np.array([0.,0.])):
     """ Unperturbed air salinity."""
