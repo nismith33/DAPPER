@@ -14,9 +14,9 @@ import os
 def exp_ref_forcing_da(N=100, seed=1000):
     # Timestepping. Timesteps of 1 day, running for 200 year.
     Tda = 20 * stommel.year #time period over which DA takes place. 
-    kko = np.arange(1, int(Tda/stommel.year)+1)
-    tseq = modelling.Chronology(stommel.year, kko=kko, 
-                                T=200*stommel.year, BurnIn=0)  # 1 observation/year
+    kko = np.arange(1, int(Tda/stommel.year)*12+1)
+    tseq = modelling.Chronology(stommel.year/12, kko=kko, 
+                                T=50*stommel.year, BurnIn=0)  # 1 observation/month
     # Create default Stommel model
     model = stommel.StommelModel()
     #Switch on heat exchange with atmosphere. 
@@ -38,6 +38,11 @@ def exp_ref_forcing_da(N=100, seed=1000):
                  for func2 in noised]
     #Switch on salinity fluxes. 
     model.fluxes.append(stommel.SaltAirFlux(functions))
+    # Add additional periodic forcing from Budd et al.
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0,
+                                                        stommel.Bhat(4.0, 5.0), 0.0)
+    model.fluxes.append(stommel.TempAirFlux(temp_forcings))
+    model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
     # Initial conditions
     x0 = model.x0
     #Variance Ocean temp[2], ocean salinity[2], temp diffusion parameter,

@@ -13,8 +13,8 @@ import os
 # Number of ensemble members
 N = 0
 # Timestepping. Timesteps of 1 day, running for 400 year.
-tseq = modelling.Chronology(stommel.year*10, kko=np.array([],dtype=int), 
-                            T=400*stommel.year, BurnIn=0)  # 1 observation/year
+tseq = modelling.Chronology(stommel.year, kko=np.array([],dtype=int), 
+                            T=100*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
 # Adjust default initial conditions.
@@ -26,9 +26,10 @@ model.fluxes.append(stommel.TempAirFlux(stommel.default_air_temp(N)))
 #Switch on salinity exchange with atmosphere. Assume stationary air salinity. 
 model.fluxes.append(stommel.SaltAirFlux(stommel.default_air_salt(N)))
 #Add additional periodic forcing 
-temp_forcings, salt_forcings = stommel.budd_forcing(model, x0, 100., .1, .1)
-model.fluxes.append(stommel.FunctionTempFlux(temp_forcings))
-model.fluxes.append(stommel.FunctionSaltFlux(salt_forcings))
+temp_forcings, salt_forcings = stommel.budd_forcing(model, x0, 10., 5.0, 
+                                                    stommel.Bhat(4.0,5.0), 0.0)
+model.fluxes.append(stommel.TempAirFlux(temp_forcings))
+model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
 #Set initial conditions. 
 x0 = x0.to_vector()
 X0 = modelling.GaussRV(C=np.zeros_like(x0), mu=x0)
