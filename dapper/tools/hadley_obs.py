@@ -21,6 +21,7 @@ import sklearn as sl
 import shapely
 import matplotlib as mpl
 import pickle as pkl
+import dapper.mods.Stommel as stommel
 
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
@@ -151,18 +152,29 @@ class HadleyObs:
         Calculate grid cell area.        
         """
         # Longitude and latitude grids.
-        lon, lat = np.meshgrid(data['lon180'], data['lat'])
+        lon, lat = np.meshgrid(data['lon'], data['lat'])
+        lon180, lat = np.meshgrid(data['lon180'], data['lat'])
 
         # Jacobian
-        J = EARTH_RADIUS**2 * np.cos(np.deg2rad(lat))
+        Jx = EARTH_RADIUS * np.cos(np.deg2rad(lat)) * np.deg2rad(1)
+        Jy = EARTH_RADIUS * np.deg2rad(1) * np.ones_like(lat)
 
         # Calculate areas
-        areas = np.ones_like(lon) * np.nan
-        areas[1:-1, 1:-1] = (0.5*(lon[1:-1, 2:] - lon[1:-1, :-2])
-                             * 0.5*(lat[2:, 1:-1] - lat[:-2, 1:-1])
-                             * J[1:-1, 1:-1])
+        dx = np.ones_like(lon) * np.nan
+        dx180 = np.ones_like(lon) * np.nan
+        dy = np.ones_like(lon) * np.nan
+        
+        dx[1:-1,1:-1] = 0.5*(lon[1:-1,2:] - lon[1:-1,:-2]) * Jx[1:-1,1:-1]
+        dx180[1:-1,1:-1] = 0.5*(lon180[1:-1,2:] - lon180[1:-1,:-2]) * Jx[1:-1,1:-1]
+        dx = np.minimum(dx,dx180)
+        dy[1:-1,1:-1] = 0.5*(lat[2:, 1:-1] - lat[:-2, 1:-1]) * Jy[1:-1,1:-1]
+        areas = dx*dy
+        
+        data = data.assign(area=(['lat', 'lon'], np.abs(areas)))
+        data = data.assign(dx=(['lat','lon'], np.abs(dx)))
+        data = data.assign(dy=(['lat','lon'], np.abs(dy)))
 
-        return data.assign(area=(['lat', 'lon'], np.abs(areas)))
+        return data
 
     def add_volume(self, data):
         """ 
@@ -521,7 +533,29 @@ def average_cluster(data, indices):
     return xr.Dataset(output)
 
 
-def create_yy(data, indices):
+def label_indices(data, indices):
+    if len(indices) != 4:
+        msg = "4 clusters must be provided."
+        raise ValueError(msg)
+
+    # Spatial average.
+    outputs = []
+    for indices_cluster in indices:
+        outputs.append(average_cluster(data, indices_cluster))
+
+    # Sort clusters first latitude than by depth
+    lats = [float(output['lat']) for output in outputs]
+    depths = [float(output['depth']) for output in outputs]
+    isort = np.lexsort((depths, lats))
+
+    labels = [('equator','surface'),('equator','ocean'),
+              ('pole','surface'),('pole','ocean')]
+    labels = np.take(labels, isort, axis=0)
+    
+    return labels
+    
+
+def create_yy(data, indices, dt=1):
     """ 
     This function creates a file containing the numpy arrays for yy and
     error variance. 
@@ -533,30 +567,32 @@ def create_yy(data, indices):
     indices : list of xarray objects. 
         Object containing time series of volume-averaged time series produced
         by spatial_average for each cluster.
+    dt : int > 0 
+        Averaging period for observations.
 
     """
-    if len(indices) != 4:
-        msg = "4 clusters must be provided."
-        raise ValueError(msg)
+    dt = int(dt)
+    
+    #Label different data
+    labels = label_indices(data,indices)
+    
+    # Values of observations 
+    for label, index in zip(labels, indices):
+        if all(label==['pole','ocean']):
+            pole = average_cluster(data, index)
+        if all(label==['equator','ocean']):
+            equator = average_cluster(data, index)
 
-    # Spatial average.
-    outputs = []
-    for indices_cluster in indices:
-        outputs.append(average_cluster(data, indices_cluster))
-
-    # Sort clusters first by depth than by latitude
-    lats = [float(output['lat']) for output in outputs]
-    depths = [float(output['depth']) for output in outputs]
-    isort = np.lexsort((lats, depths))
-
-    # Values of observations
-    pole = outputs[isort[2]]
-    equator = outputs[isort[3]]
-
+    # Observations
     yy = np.array([pole['temperature'], equator['temperature'], pole['salinity'],
                    equator['salinity']])
     yy[:2] = kelvin2celsius(yy[:2])
     yy = list(yy.T)
+    
+    #Average in time
+    yy=yy[:int(np.size(yy,0)/dt)*dt]
+    yy=np.reshape(yy,(-1,dt,np.size(yy,1)))
+    yy=np.mean(yy, axis=1)
 
     # Observational error covariances
     R = np.array([pole['temperature_uncertainty'].max(),
@@ -570,7 +606,70 @@ def create_yy(data, indices):
 
     return yy, mu, R
 
+def create_model(data, indices):
+    """ 
+    This function overwrites the default values for box sizes and 
+    initial temperature and salinity in the StommelModel object with 
+    those derived from data. 
+    
+    data : xarray Dataset
+        Hadley observations data set. 
+    indices : list of int tuples 
+        Indices for each of the four North-Atlantic ocean regions as produced 
+        by StommelCluster
+        
+    
+    """
+    #Label different data
+    labels = label_indices(data,indices)
+    
+    #Stommel model
+    model = stommel.StommelModel()
+    
+    #Cluster representing ocean boxes
+    for label, index in zip(labels, indices):
+        if all(label==['pole','ocean']):
+            pindices = index
+            pole = average_cluster(data, index)
+        if all(label==['equator','ocean']):
+            eindices = index
+            equator = average_cluster(data, index)
+            
+    def geometry(data, indices):
+        indices = np.array(indices)
+        indices = np.unique(indices[:,1:], axis=0)
+        
+        #zonal
+        widths = np.zeros_like(data['dx']) 
+        for ind in indices:
+            widths[ind[0],ind[1]] = data['dx'][ind[0],ind[1]]
+        widths = np.sum(widths, axis=1)
+        dx = np.nanmean(widths)
+        
+        #meridional
+        dy = np.nansum([data['area'][i[0],i[1]] for i in indices]) / dx
+        
+        #depth 
+        V = np.nansum(output['volume'], axis=0)
+        dz = np.nansum([V[i[0],i[1]] for i in indices]) / ( dx * dy)
+        
+        return dz,dy,dx 
+        
+    model.dz[0][0], model.dy[0][0], model.dx[0][0] = geometry(data, pindices)
+    model.dz[0][1], model.dy[0][1], model.dx[0][1] = geometry(data, eindices)
+    model.V = model.dx * model.dy * model.dz
 
+    #Set initial conditions
+    x0 = model.init_state 
+    x0.temp = np.array([[kelvin2celsius(pole['temperature'].mean('time')),
+                         kelvin2celsius(equator['temperature'].mean('time'))]], dtype=float)
+    x0.salt = np.array([[pole['salinity'].mean('time'),
+                         equator['salinity'].mean('time')]], dtype=float)
+    model.init_state = x0 
+    
+    return model
+    
+    
 def create_surface(data, indices):
     """ 
     This function calculates the mean temperature and salinity over the 
@@ -586,23 +685,14 @@ def create_surface(data, indices):
         by spatial_average for each cluster.
 
     """
-    if len(indices) != 4:
-        msg = "4 clusters must be provided."
-        raise ValueError(msg)
-
-    # Spatial average.
-    outputs = []
-    for indices_cluster in indices:
-        outputs.append(average_cluster(data, indices_cluster))
-
-    # Sort clusters first by depth than by latitude
-    lats = [float(output['lat']) for output in outputs]
-    depths = [float(output['depth']) for output in outputs]
-    isort = np.lexsort((lats, depths))
-
-    # Values of observations
-    pole = outputs[isort[1]]
-    equator = outputs[isort[0]]
+    
+    # Values of observations 
+    labels = label_indices(data,indices)
+    for label, index in zip(labels, indices):
+        if all(label==['pole','surface']):
+            pole = average_cluster(data, index)
+        if all(label==['equator','surface']):
+            equator = average_cluster(data, index)
 
     means = {}
     for field in ['temperature', 'salinity']:
@@ -611,9 +701,13 @@ def create_surface(data, indices):
             w = 1/data[field+'_uncertainty']**2
             means[field][box] = float((data[field]*w).mean('time') / w.mean('time'))
             means['sig_'+field][box] = data[field].std('time')
+    
+    means['mixing_depth'] = np.empty((2,))
+    for box, data in enumerate([pole,equator]):  
+        means['mixing_depth'][box] = float(data['depth']) 
 
     means['temperature'] = kelvin2celsius(means['temperature'])
-
+    
     return means
 
 
