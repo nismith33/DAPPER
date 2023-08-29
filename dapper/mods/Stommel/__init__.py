@@ -17,6 +17,12 @@ mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365 #convert year to seconds
 func_type = type(lambda:0.0)
 
+def Bhat(A,B):
+    """
+    Calculate Bhat from A and B as defined in Budd et al. 
+    """
+    return B - A
+
 def budd_forcing(model, state, Omega, B, Bhat, epsilon=0.0):
     """Create forcing functions based on 
     
