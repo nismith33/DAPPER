@@ -27,25 +27,25 @@ def exp_ref_forcing(N=100, seed=1000):
     # Add white noise with std dev of 2C over both pole and equator basin separately.
     noised = [stommel.add_noise(func, seed=seed+n*20+1, sig=np.array([2., 2.]))
               for n, func in enumerate(functions)]
-    functions = [stommel.merge_functions(Tda, noised[0], func2)
-                 for func2 in noised]
-    # Switch on the atm. heat fluxes.
-    model.fluxes.append(stommel.TempAirFlux(functions))
+    default_temps =  [stommel.merge_functions(Tda, noised[0], func2)
+                      for func2 in noised]
     # Switch on salinity exchange with atmosphere.
     # Start with default stationary atm. salinity.
-    functions = stommel.default_air_salt(N)
+    functions= stommel.default_air_salt(N)
     # Add white with std dev. of .2 ppt.
     noised = [stommel.add_noise(func, seed=seed+n*20+2, sig=np.array([.2, .2]))
               for n, func in enumerate(functions)]
-    functions = [stommel.merge_functions(Tda, noised[0], func2)
+    default_salts = [stommel.merge_functions(Tda, noised[0], func2)
                  for func2 in noised]
     # Switch on salinity fluxes.
     model.fluxes.append(stommel.SaltAirFlux(functions))
     # Default initial conditions
     x0 = model.x0
-    # Add additional periodic forcing from Budd et al.
-    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0,
-                                                        stommel.Bhat(4.0, 5.0), 0.0)
+    #Add additional periodic forcing 
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
+                                                        stommel.Bhat(4.0,5.0), 0.0)
+    temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
+    salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
     model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
     # Variance Ocean temp[2], ocean salinity[2], temp diffusion parameter,
