@@ -126,9 +126,9 @@ class State:
     #salinity in ocean basis
     salt: np.ndarray = np.array([[34.9256028, 34.7274021]]) #ppt 35,36.5
     #surface salinity flux coefficient
-    salt_diff: float = 3e-5 / mixing_depth / mm2m #m2/s/m = 1e3 mm/s
+    salt_diff: float = 3e-4 / mixing_depth / mm2m #m2/s/m = 1e3 mm/s
     #surface heat flux coefficient
-    temp_diff: float = 1e-4 / mixing_depth / mm2m #m2/s/m
+    temp_diff: float = 1e-3 / mixing_depth / mm2m #m2/s/m
     #advective transport flux ceofficient 
     gamma: float = 0.0
     #time associated with state
