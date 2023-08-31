@@ -10,11 +10,17 @@ from dapper.da_methods.ensemble import EnKF
 import matplotlib.pyplot as plt
 from copy import copy 
 import os
+import pickle as pkl
+
+#Import HADLEY data 
+DIR = "/home/ivo/Downloads/EN.4.2.2.analyses.g10.2019"
+with open(os.path.join(DIR,'yy.pkl'), 'rb') as stream:
+    hadley = pkl.load(stream)
 
 def exp_ref_forcing_da(N=100, seed=1000):
     # Timestepping. Timesteps of 1 day, running for 200 year.
     Tda = 20 * stommel.year #time period over which DA takes place. 
-    kko = np.arange(1, int(Tda/stommel.year)*12+1)
+    kko = np.arange(1, len(hadley['yy'])+1)
     tseq = modelling.Chronology(stommel.year/12, kko=kko, 
                                 T=50*stommel.year, BurnIn=0)  # 1 observation/month
     # Create default Stommel model
@@ -25,7 +31,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
     #Add white noise with std dev of 2C over both pole and equator basin separately. 
     noised = [stommel.add_noise(func, seed=seed+n*20+1, sig=np.array([2.,2.])) 
               for n,func in enumerate(functions)]
-    functions = [stommel.merge_functions(Tda, noised[0], func2) 
+    default_temps = [stommel.merge_functions(Tda, noised[0], func2) 
                  for func2 in noised]
     #Switch on the atm. heat fluxes. 
     model.fluxes.append(stommel.TempAirFlux(functions))
@@ -34,13 +40,15 @@ def exp_ref_forcing_da(N=100, seed=1000):
     #Add white with std dev. of .2 ppt. 
     noised = [stommel.add_noise(func, seed=seed+n*20+2, sig=np.array([.2,.2])) 
               for n,func in enumerate(functions)]
-    functions = [stommel.merge_functions(Tda, noised[0], func2) 
+    default_salts = [stommel.merge_functions(Tda, noised[0], func2) 
                  for func2 in noised]
     #Switch on salinity fluxes. 
     model.fluxes.append(stommel.SaltAirFlux(functions))
-    # Add additional periodic forcing from Budd et al.
-    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0,
-                                                        stommel.Bhat(4.0, 5.0), 0.0)
+    #Add additional periodic forcing 
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
+                                                        stommel.Bhat(4.0,5.0), 0.0)
+    temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
+    salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
     model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
     # Initial conditions
@@ -48,8 +56,8 @@ def exp_ref_forcing_da(N=100, seed=1000):
     #Variance Ocean temp[2], ocean salinity[2], temp diffusion parameter,
     #salt diffusion parameter, transport parameter
     B = stommel.State().zero()
-    B.temp += 0.5**2 #C2
-    B.salt += 0.05**2 #ppt2
+    B.temp += np.mean(hadley['R'][:2]) #C2
+    B.salt += np.mean(hadley['R'][2:]) #ppt2
     B.temp_diff += (0.3*model.init_state.temp_diff)**2
     B.salt_diff += (0.3*model.init_state.salt_diff)**2
     B.gamma += (0.3*model.init_state.gamma)**2
@@ -73,6 +81,7 @@ if __name__=='__main__':
     
     #Run
     xx, yy = HMM.simulate()
+    yy = hadley['yy']
     Efor, Eana = xp.assimilate(HMM, xx, yy)
     
     #Plot
