@@ -201,7 +201,7 @@ def var_Id_Obs(Nx) :
         obs_inds=np.arange(Ny(t))
         H = direct_obs_matrix(Nx, obs_inds)
         return H
-    Obs = {'M': Ny(0), #Initial value.
+    Obs = {'M': 0, #Initial value.
            'model': model,
            'linear': linear,
            }
@@ -214,15 +214,25 @@ def model_Obs(model_obs, database):
     
     @name_func(f"Point observations.")
     @ens_compatible
-    def model(x, t):         
-        return model_obs(database, x, t)
+    def model(x, t):
+        s = np.array(np.shape(x))
+        if np.sum(s>1)==1:  
+            return model_obs(database, x, t)
+        elif np.sum(s>1)==2:
+            Eo=[]
+            for x1 in x.T:
+                Eo.append(model_obs(database, x1, t))
+            Eo=np.array(Eo)
+            return Eo.T
+        else:
+            raise TypeError("State must be array of dim 1/2.")
         
     @name_func(f"H for point observations")
     def linear(x, t): 
         msg = "Observation operator H not implemented for point_obs."
         raise NotImplementedError(msg)
     
-    Obs = {'M': 1, 'model': model, 'linear': linear}
+    Obs = {'M': 0, 'model': model, 'linear': linear}
     return Obs
 
 def Id_Obs(Nx):
