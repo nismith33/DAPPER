@@ -102,7 +102,7 @@ def ens_rmse(xx, E, sector=None):
     
     rmse=[]
     for x,e in zip(xx,E):
-        error2 = (e[:,sector] - np.reshape(x[sector],(1,-1)))**2
+        error2 = (np.mean(e[:,sector],0) - x[sector])**2
         error2 = np.mean(error2)
         rmse.append(np.sqrt(error2))
         
@@ -500,12 +500,21 @@ class Stats(series.StatPrint):
         A_pow *= A
         now.skew = np.array([skew(wA1,s1) if s1>eps else np.nan for wA1,s1 in 
                              zip(w@A_pow,s)])
-        now.skew = np.nanmean(now.skew)
+
+        
+        if np.all(np.isnan(now.skew)):
+            now.skew = 0.0 
+        else: 
+            now.skew = np.nanmean(now.skew)
         
         A_pow *= A
         now.kurt = np.array([kurt(wA1,s1) if s1>eps else np.nan for wA1,s1 
                              in zip(w@A_pow,s)])
-        now.kurt = np.nanmean(now.kurt)
+        
+        if np.all(np.isnan(now.kurt)):
+            now.kurt = 0.0
+        else: 
+            now.kurt = np.nanmean(now.kurt)
         
         now.mad  = np.nanmean(w @ abs(A))
 
