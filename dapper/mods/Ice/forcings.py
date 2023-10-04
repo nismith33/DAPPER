@@ -11,6 +11,7 @@ the ice simulations.
 
 import datetime
 import numpy as np
+from copy import copy 
 from abc import ABC, abstractmethod
 from pickle import NONE
 
@@ -162,6 +163,7 @@ class AR(ABC):
         
         self.time = None 
         self.seed = None
+        self.storage = {}
         
     def build_matrix(self):
         self.R = np.diag(np.ones_like(self.r),1)
@@ -178,13 +180,12 @@ class AR(ABC):
         self.time = self.time + self.dt
         self.set_seed(self.time)
         self.values[0] = np.random.normal(scale=self.std)
-        
         self.values = self.R @ self.values
             
     def backward(self):
-        self.values = self.invR @ self.values 
-        
         self.time = self.time - self.dt 
+        
+        self.values = self.invR @ self.values 
         self.set_seed(self.time)
         self.values[0] = np.random.normal(scale=self.std)
           
@@ -240,7 +241,7 @@ class AR1(AR):
         
         self.default_init(dt, mean, var, np.array([r]), base_seed)
        
-    def build_values(self, time):
+    def build_values(self, time):        
         self.values = np.zeros((2,np.size(self.std)))
 
         self.time = time
@@ -248,15 +249,64 @@ class AR1(AR):
         self.values[0] = np.random.normal(scale=self.std)
         self.values[1] = np.random.normal(scale=self.std)
         
+class SpectralNoise:
+    """ 
+    Function representing stochastic noise with a certain spectral profile.
+    
+    :type c_var: float 
+    :param c_var: variance per unit time in phase speed. 
+    :type wavelengths: Numpy array float>0.0
+    :param wavelengths: spatial wavelengths in noise.
+    :type amplitudes: Numpy array float>0.0
+    :param amplitudes: amplitude of the different wavelengths in noise.
+    
+    """
+    
+    def __init__(self, phase_generator, wavelengths, amplitudes):
+        """ Class constructor. """
+        self.k = 2*np.pi/np.array(wavelengths, dtype=complex) * complex(0.0, 1.0)
+        self.amplitudes = np.array(np.abs(amplitudes),dtype=complex)
+        self.phase_generator = phase_generator
+        self.time = None
+        
+    def _update_time(self, time):
+        """
+        Move noise forward in time. 
+        
+        :type time: datetime.datetime object 
+        :param time: current time.
+        
+        """
+        if self.time!=time:
+            self.time = time
+            dc = np.array([ar.sample(time) for ar in self.phase_generator]) * complex(0,1.)
+            self.amplitudes = np.abs(self.amplitudes) * np.exp(dc)
+        
+    def __call__(self, time, coordinate):
+        """
+        Evaluate noise at time and position. 
+        
+        :type time: datetime.datetime 
+        :param time: current time.
+        :type coordinate: Numpy array of float 
+        :param coordinate: position in grid. 
+        
+        """
+        self._update_time(time)
+        value = np.sqrt(2) * np.sum(self.amplitudes * np.exp(coordinate * self.k))
+        return np.real( value )             
+        
 class MovingWave(Forcing):
 
     def __init__(self, model, base_function,
                  base_velocity=0., base_amplification=1.,
-                 T_ramp=datetime.timedelta(seconds=0)):
+                 T_ramp=datetime.timedelta(seconds=0),
+                 ):
 
         self.base_function = base_function
         self.base_velocity = base_velocity
         self.base_amplification = base_amplification
+        self.spectral = None
         self.amplification = None
         self.T_ramp = T_ramp
         self.previous_time = None
@@ -267,9 +317,10 @@ class MovingWave(Forcing):
         self.center = None
         self.set_noise()
 
-    def set_noise(self, amplification=lambda t:0., center=lambda t:0.):
+    def set_noise(self, amplification=lambda t:0., center=lambda t:0., spectral=None):
         self.noise_amplification = amplification 
         self.noise_center = center
+        self.noise_spectral = spectral
             
     def update_amplification(self, time):
         self.amplification = self.base_amplification + self.noise_amplification.sample(time)
@@ -282,6 +333,11 @@ class MovingWave(Forcing):
     def forcing(self, t, x):   
         self.update_amplification(t)
         self.update_center(t)
+        
+        if self.noise_spectral is not None:
+            signal = self.noise_spectral(t,x)
+        else:
+            signal = 0.
             
         #Relative time.
         t=(t-self.ref_time)/datetime.timedelta(days=2)
@@ -301,10 +357,8 @@ class MovingWave(Forcing):
         #Smooth out jumps in time. 
         ramp_factor *= 1.-np.cos(np.pi*t)**4
         
-        signal = ramp_factor * self.amplification * self.base_function(phase)
-        #signal += self.amplitude_noise['signal'] * self.drawer.draw(t,x)
-        return signal
-
+        return ramp_factor * (signal + self.amplification * self.base_function(phase))
+    
     def copy(self):
         from copy import deepcopy
         return deepcopy(self)

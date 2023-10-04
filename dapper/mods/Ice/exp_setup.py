@@ -33,7 +33,7 @@ default_seed = 2000
 # Create time sequenc
 T = 16*24*60  # minutes
 Burn = 0*60  # minutes
-tseq = modelling.Chronology(30., dto=3*60., T=T, Tplot=T, BurnIn=Burn)
+tseq = modelling.Chronology(60., dto=60., T=T, Tplot=T, BurnIn=Burn)
 
 def default_wind():
     return {'base_velocity': 1.1/86400.,
@@ -90,7 +90,7 @@ def red_noise(slope, max_wavelength, cutoff=0.01):
 
 
 default_noise_init = {'velocity_ice': Quantity(0.0, 'ms-1'), #0.01 ms-1
-                      'thickness_ice': Quantity(0.03, 'm')} #0.1 m
+                      'thickness_ice': Quantity(0.05, 'm')} #0.1 m
 
 
 def default_obs():
@@ -165,6 +165,8 @@ def aev_pnormal(xp=None, obs_db=None, order=4):
         std = float(value/meta.unit.as_si)
         var_init[model.indices[meta]] = std**2
 
+    
+
     # part of model
     sectors = {}
     coordinates = np.array([], dtype=float)
@@ -189,15 +191,15 @@ def aev_pnormal(xp=None, obs_db=None, order=4):
     for key, amp in noise_init.items():
         X0.add_sector(key, sectors[key],coordinates[sectors[key]])
         phase = AR1(model.dt, mean=0., var=(np.pi*3/model.dt.total_seconds())**2, 
-                    T=timedelta(minutes=1), base_seed=default_seed)
+                     T=timedelta(minutes=1), base_seed=default_seed)
         amp1 = float(amp / model.metas[key].unit.as_si)
         X0.add_spectral(key, phase, wavelengths, amp1 * amplitudes)
         X0.ref_time = model.ref_time
         
         N0.add_sector(key, sectors[key],coordinates[sectors[key]])
         phase = AR1(model.dt, mean=0., var=(np.pi*3/model.dt.total_seconds())**2, 
-                    T=timedelta(minutes=1), base_seed=default_seed+7)
-        amp1 =  0.15 * float(amp / model.metas[key].unit.as_si) / np.sqrt(tseq.dt)
+                     T=timedelta(minutes=1), base_seed=default_seed+7)
+        amp1 =  0.0 * float(amp / model.metas[key].unit.as_si) / np.sqrt(tseq.dt)
         N0.add_spectral(key, phase, wavelengths, amp1 * amplitudes)
         N0.ref_time = model.ref_time
         
@@ -248,7 +250,7 @@ def obs_uniform(number):
 # %%
 from dapper.tools.inflation import ObsInflator, AdaptiveRTPP, ArithmeticMeanFilter
 mean_w = np.ones((8,))
-save_dir = '/home/ivo/dpr_data/obsdensity/p4_Q3'
+save_dir = '/home/ivo/dpr_data/obsdensity/p4_Q'
 if not os.path.isdir(save_dir):
     os.mkdir(save_dir)
 
@@ -479,10 +481,8 @@ def create_exp_refinement():
     for number in numbers:
         xps = xp_wind(xps, name, N=32)
         xps = xp_refinement(xps, name, int(number), 
-                            "thickness_ice", 3e-2) # 2e-3)
+                            "thickness_ice",5e-2) #32e-3)
         xps[-1].univariate=False
-        xps[-1].noise_init = {'velocity_ice': Quantity(0.0, 'ms-1'), 
-                              'thickness_ice': Quantity(0.0, 'm')} 
         
     return HMM, xps
     
