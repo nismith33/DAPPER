@@ -10,9 +10,9 @@ from dapper.tools.matrices import CovMat
 #Datatype to store point measurements.
 def point_obs_type(dim):
     return np.dtype([('time',float), ('coordinates',float,(dim,)),
-                    ('bias',float), ('var',float),
+                    ('bias',float), ('var',float), ('rvar',float),
                     ('field_name',np.unicode_,32),
-                    ('measurement',float)])
+                    ('obs',float)])
 
 class RV(NicePrint):
     """Class to represent random variables."""
@@ -90,6 +90,18 @@ class RV(NicePrint):
             raise KeyError
         assert self.M == E.shape[1]
         return E
+    
+class RV_from_function(RV):
+    
+    def __init__(self, function):
+        self.function = function
+        self.time = None
+        
+    def update(self, *args, **kwargs):
+        self.time = args[1]
+        
+    def sample(self, N):
+        return self.function(N, self.time)
 
 
 # TODO 4: improve constructor (treatment of arg cases is too fragile).
@@ -102,7 +114,7 @@ class RV_with_mean_and_cov(RV):
 
     def __init__(self, mu=0, C=0, M=None):
         """Init allowing for shortcut notation."""
-        self._M=None
+        self._M = None
          
         if isinstance(mu, CovMat):
             raise TypeError("Got a covariance paramter as mu. "
@@ -127,15 +139,17 @@ class RV_with_mean_and_cov(RV):
              
     def _set_M(self, mu, C, M):
         if M is not None:
-            self._M = M 
+            self._M = int(M) 
         elif isinstance(mu, np.ndarray) and np.ndim(mu)==1:
             self._M = len(mu)
         elif isinstance(C, CovMat):
-            self._M = C.M
+            self._M = int(C.M)
+        elif isinstance(C, RV):
+            self._M = int(C.M)
         elif isinstance(C, np.ndarray):
             self._M = np.size(C,0)
         else:
-            raise TypeError("Could not deduce the value of M")
+            raise TypeError("Could not deduce the value of M from mu/C.")
         
     def _set_mu(self, mu):
         if isinstance(mu, (int, float)):
@@ -143,7 +157,7 @@ class RV_with_mean_and_cov(RV):
         elif isinstance(mu, np.ndarray):
             self.mu = mu 
         else:
-            raise TypeError("Could not deduce the value of M")
+            raise TypeError("Could not deduce the value of M from mu.")
         
         if len(self.mu) != self.M:
             raise TypeError("Inconsistent shapes of (M,mu,C)")
@@ -151,6 +165,8 @@ class RV_with_mean_and_cov(RV):
     def _set_C(self, C):
         if isinstance(C, CovMat):
             self.C = C
+        elif isinstance(C, RV_with_mean_and_cov):
+            self.C = C.C
         elif isinstance(C, (int,float)) and C==0:
             self.C = 0
         elif isinstance(C, (int,float)):
@@ -158,7 +174,7 @@ class RV_with_mean_and_cov(RV):
         elif isinstance(C, np.ndarray) and np.ndim(C)==1:
             self.C = CovMat(C, 'diag')
         else:
-            raise TypeError("Could not deduce the value of M")
+            raise TypeError("Could not deduce the value of M from C.")
         
         if isinstance(C, CovMat) and self.M != self.C.M:
             raise TypeError("Inconsistent shapes of (M,mu,C)")    
@@ -192,35 +208,124 @@ class GaussRV(RV_with_mean_and_cov):
 class TimeGaussRV(RV_with_mean_and_cov):
     """Gaussian (Normal) multivariate random variable."""
     
-    def __init__(self, database):
+    def __init__(self, database, seed):
         """ Set database from which variances and means are retrieved."""
         self._time = None
         self.args = {}
+        self.seed = seed
         
         self.database = database
-        self.time = min(database['time'])
+        self.update(None, min(database['time']))
         
     @property
     def time(self):
         return self._time
-    
-    @time.setter
-    def time(self, time):
-        if self.time != time:
-            selection = self.database['time'] == time 
-            M = sum(selection)
-        if self._time != time and M>0:
+            
+    def update(self, *args, **kwargs):
+        E, time = args[0], args[1]
+        if self.time == time:
+            return
+        
+        #Observation at this time. 
+        selection = self.database['time'] == time 
+        M = np.sum(selection)
+        
+        #Ensemble variance in observation space. 
+        s = np.array(np.shape(E))
+        if np.sum(s>1)>1:
+            var = np.var(E, axis=0, ddof=1)
+        else:
+            var = np.zeros((M,))
+          
+        #Rebuild obs. covariance if necessary.  
+        if M>0:
             self._time = time
             self.args['mu'] = self.database['bias'][selection]
-            self.args['C'] = self.database['var'][selection]
+            self.args['C']  = self.database['var'][selection]
+            self.args['C'] += self.database['rvar'][selection] * var
             self.args['M'] = M
-            self.rebuild(M)
+            self.rebuild(M)  
     
-    def _sample(self, N):           
+    def _sample(self, N):  
+        np.random.seed(int(self.time) + self.seed)     
         R = self.C.Right
         D = rnd.randn(N, len(R)) @ R
         return D
-
+    
+class CoordinateRV(RV):
+    
+    def __init__(self, N_max, M, mu=0):
+        from datetime import datetime, timedelta #ip:
+        
+        self._M = M
+        self.mu = mu 
+        self.N_max = N_max
+        
+        self.generators={}
+        self.coordinates={}
+        self.indices={}
+        
+        self.time = 0.
+        self.ref_time = datetime(2000,1,1)
+    
+    @property 
+    def M(self):
+        return self._M 
+    
+    @M.setter
+    def M(self, m):
+        self._M = M 
+        
+        if np.all(self.mu==self.mu[0]):
+            self.mu = self.mu[0]
+        
+        if isinstance(self.mu, (int,float)):
+            self.mu = np.ones((self.M,)) * self.mu 
+        elif np.size(mu) != self.M:
+            raise ValueError('Cannot resize mu.')      
+        
+    def add_sector(self, sector, indices, coordinates):
+        self.indices[sector] = indices 
+        self.coordinates[sector] = coordinates
+    
+    def add_spectral(self, sector, phase_generator, wavelengths, amplitudes):
+        from copy import deepcopy
+        from dapper.mods.Ice.forcings import SpectralNoise
+        
+        self.generators[sector] = []
+        for n in range(self.N_max):
+            generators = [deepcopy(phase_generator) for A in amplitudes]
+            for m,generator in enumerate(generators):
+                generators[m].base_seed += m + 13*n
+              
+            self.generators[sector].append(SpectralNoise(generators, wavelengths, amplitudes))
+            
+    def update(self, *args, **kwargs):
+        E, time = args[0], args[1]
+        self.time = time
+    
+    def sample1(self, n, sector, E1):
+        from datetime import datetime, timedelta #ip:
+        generator = self.generators[sector][n]
+        time = datetime(2000,1,1) + timedelta(minutes=self.time)
+        
+        for ind, coord in zip(self.indices[sector], self.coordinates[sector]):
+            E1[ind] = generator(time, coord)
+    
+        return E1
+    
+    def sample(self, N):
+        E = np.zeros((N, self.M))
+        
+        for n in range(N):
+            for key in self.generators:
+                E[n] = self.sample1(n, key, E[n])
+                
+        if N==1:
+            return E[0] + self.mu
+        else:
+            return E + np.reshape(self.mu,(1,-1))
+            
 
 class LaplaceRV(RV_with_mean_and_cov):
     """Laplace (double exponential) multivariate random variable.
