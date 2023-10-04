@@ -62,6 +62,9 @@ def set_seed(sd="clock"):
         microsec = int(10**6 * time.time())
         MAXSEED = 2**32
         sd = microsec % MAXSEED
+    elif isinstance(sd, (float, int)):
+        MAXSEED = 2**32
+        sd = int(1e6 * sd) % MAXSEED
 
     if sd:
         rnd.seed(sd)
