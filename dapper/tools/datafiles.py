@@ -174,6 +174,7 @@ class NetcdfIO:
     def __init__(self, file_path):
         self.format = 'NETCDF4'
         self.file_path = os.path.abspath(file_path) 
+        self.file_name = os.path.splitext(os.path.basename(file_path))[0]
         self.float_type = 'f8'
         self.int_type = 'i4'
         
@@ -205,7 +206,8 @@ class NetcdfIO:
         self.create_dim_time(HMM.tseq)
         self.create_dim_state(HMM)
         self.create_dim_obs(HMM)
-        self.create_dim_ens(N)
+        if N>0:
+            self.create_dim_ens(N)
         
     def create_dim_ens(self, N):                
         with self.istream as nc:
