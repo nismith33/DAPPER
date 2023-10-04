@@ -104,7 +104,7 @@ def da_method(*default_dataclasses):
             # Progressbar name
             pb_name_hook = self.da_method if desc is None else desc # noqa
 
-            # Init stats
+            # Init 
             self.stats = dapper.stats.Stats(self, HMM, xx, yy, **stat_kwargs)
 
             # Assimilate
@@ -199,4 +199,4 @@ from .ensemble import LETKF, SL_EAKF, EnKF, EnKF_N, EnKS, EnRTS
 from .extended import ExtKF, ExtRTS
 from .other import LNETF, RHF
 from .particle import OptPF, PartFilt, PFa, PFxN, PFxN_EnKF
-from .variational import Var4D, iEnKS
+from .variational import Var4D, iEnKS, E3DVar
