@@ -12,6 +12,7 @@ from dapper.tools.matrices import funm_psd, genOG_1
 from dapper.tools.progressbar import progbar
 from dapper.tools.randvars import GaussRV
 from dapper.tools.inflation import Inflator
+from copy import copy
 from . import da_method
 
 def scatter(mpi, mat_in, row_in, mat_out, row_out):
@@ -50,8 +51,8 @@ class ens_method:
     rot: bool          = False
     univariate: bool   = False
     fnoise_treatm: str = 'Stoch'
-
-
+    mpi: multiproc.MPI = multiproc.NoneMPI()
+    
 def init_mpi_ensemble(object, HMM):
     import sys
         
@@ -93,12 +94,8 @@ class EnKF:
 
     upd_a: str
     N: int
-    
-    #Default mpi controller
-    mpi = multiproc.NoneMPI()
 
     def assimilate(self, HMM, xx, yy):
-        from copy import copy 
         
         E1, members1, E, members, inan = init_mpi_ensemble(self, HMM)
         if hasattr(self,'save_nc'):
@@ -128,17 +125,15 @@ class EnKF:
                 Efor.append(copy(E[active]))
 
                 # Analysis update
-                if ko is not None and len(yy[ko])>0:                
+                if ko is not None and len(yy[ko])>0:  
                     self.stats.assess(k, ko, 'f', E=E[active])
                     E_ana = pre_process(t, HMM, E[active,:], yy[ko], 
                                         self.infl, self.univariate)
-                    
+
                     E_ana = EnKF_analysis(self.N, E_ana, HMM.Obs(E_ana, t), 
                                           HMM.Obs.noise, yy[ko], self.upd_a, self.stats, ko)
-                    
                     E[active,:] = post_process(E_ana, self.infl, self.rot, self.univariate,
                                                time=t, HMM=HMM, y=yy[ko])
-                    
                     if hasattr(self,'save_nc'):
                         self.save_nc.write_analysis(ko, E[active])
                         
@@ -158,7 +153,7 @@ def EnKF_analysis(N,E, Eo, hnoise, y, upd_a, stats=None, ko=None):
     `bib.sakov2008implications`, `bib.hoteit2015mitigating`
     """
     Nx = np.size(E,1)      # Dimensionality
-    N1    = N-1          # Ens size - 1
+    N1 = N-1          # Ens size - 1
 
     mu = np.mean(E, 0)   # Ens mean
     A  = E - mu          # Ens anomalies
@@ -626,7 +621,7 @@ class SL_EAKF:
                 y    = yy[ko]
                 inds = serial_inds(self.ordr, y, R, center(E)[0])
 
-                state_taperer = HMM.Obs.localizer(self.loc_rad, 'y2x', t, self.taper)
+                state_taperer = HMM.Obs.localization(self.loc_rad, 'y2x', t, self.taper)
                 for j in inds:
                     # Prep:
                     # ------------------------------------------------------
@@ -673,6 +668,7 @@ def local_analyses(E, Eo, R, y, state_batches, obs_taperer, mp=map, xN=None, g=0
         # Locate local domain
         oBatch, tapering = obs_taperer(ii)
         Eii = E[:, ii]
+        N1 = np.size(Eii,0) - 1
 
         # No update
         if len(oBatch) == 0:
@@ -697,7 +693,7 @@ def local_analyses(E, Eo, R, y, state_batches, obs_taperer, mp=map, xN=None, g=0
         R = GaussRV(C=1, M=len(dyl))
 
         # Update
-        Eii = EnKF_analysis(Eii, Yl*tpr, R, dyl*tpr, "Sqrt")
+        Eii = EnKF_analysis(N1+1, Eii, Yl*tpr, R, dyl*tpr, ["Sqrt"])
 
         return Eii, infl1
 
@@ -744,15 +740,21 @@ class LETKF:
         E = HMM.X0.sample(self.N)
         self.stats.assess(0, E=E)
         self.stats.new_series("ad_inf", 1, HMM.tseq.Ko+1)
+        
+        Efor, Eana = [], []
+        Efor.append(copy(E))
 
         with multiproc.Pool(self.mp) as pool:
             for k, ko, t, dt in progbar(HMM.tseq.ticker):
                 E = HMM.Dyn(E, t-dt, dt)
                 E = add_noise(E, dt, HMM.Dyn.noise, self.fnoise_treatm)
+                
+                Efor.append(copy(E))
 
                 if ko is not None:
                     self.stats.assess(k, ko, 'f', E=E)
-                    batch, taper = HMM.Obs.localizer(self.loc_rad, 'x2y', t, self.taper)
+                    batch, taper = HMM.Obs.localization(self.loc_rad, 'x2y', t, self.taper)
+                    E = pre_process(t, HMM, E, yy[ko], self.infl, self.univariate)
                     E, stats = local_analyses(E, HMM.Obs(E, t), HMM.Obs.noise.C, yy[ko],
                                               batch, taper, pool.map, self.xN, self.g)
                     self.stats.write(stats, k, ko, "a")
@@ -760,6 +762,9 @@ class LETKF:
                                      time=t, HMM=HMM, y=yy[ko])
 
                 self.stats.assess(k, ko, E=E)
+                Eana.append(copy(E))
+                
+        return np.array(Efor), np.array(Eana)
 
 
 def effective_N(YR, dyR, xN, g):
@@ -975,7 +980,7 @@ class EnKF_N:
     g: int     = 0
 
     def assimilate(self, HMM, xx, yy):
-        from copy import copy
+        
 
         # Init        
         E1, members1, E0, members0, inan = init_mpi_ensemble(self, HMM)
