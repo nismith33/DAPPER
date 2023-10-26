@@ -43,7 +43,7 @@ def exp_ref_forcing(N=100, seed=1000):
     x0 = model.x0
     #Add additional periodic forcing 
     temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
-                                                        stommel.Bhat(4.0,5.0), 0.0)
+                                                        stommel.Bhat(4.0,5.0), 0.01)
     temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
     salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
@@ -80,12 +80,13 @@ if __name__ == '__main__':
     Efor, Eana = xp.assimilate(HMM, xx, yy)
 
     # Plot
-    fig, ax = stommel.time_figure(HMM.tseq)
+    fig, ax = stommel.time_figure_with_phase(HMM.tseq)
     for n in range(np.size(Efor, 1)):
-        stommel.plot_truth(ax, Efor[:, n, :], yy)
+        stommel.plot_truth_with_phase(ax, model, Efor[:, n, :], yy)
 
     # Add equilibrium based on unperturbed initial conditions.
     model.ens_member = 0
+    stommel.plot_all_eq(ax, HMM.tseq, model, xx, stommel.prob_change(Efor) * 100.)
     stommel.plot_eq(ax, HMM.tseq, model, stommel.prob_change(Efor) * 100.)
 
     # Save figure
