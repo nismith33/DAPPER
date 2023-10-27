@@ -11,7 +11,7 @@ import dataclasses
 from abc import ABC, abstractmethod
 
 #Directory to store figures. 
-fig_dir = "/home/ivo/dpr_data/stommel"
+fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
 
 mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365 #convert year to seconds
@@ -645,6 +645,94 @@ def time_figure(tseq):
     ax[1].set_ylabel('Salinity diff. [ppt]')
     return fig, ax
 
+#modify time_figure, adding a third plot containing T-vs-S phase portrait
+def time_figure_with_phase(tseq):
+    plt.close('all')
+    fig = plt.figure(figsize=(14, 4))
+    ax = fig.subplots(1, 3)
+    
+    times = tseq.tt/year
+        
+    for ax1 in ax[0:2]:
+        ax1.grid()
+        ax1.set_xlim((0, times[-1]))
+        ax1.set_xlabel('Time [year]')
+    #ax[2].set_xlim((0,2.8))
+    #ax[2].set_ylim((0,2.8))
+    ax[2].set_aspect('equal', adjustable='box')
+        
+    ax[0].set_ylabel('Temperature diff. [C]')
+    ax[1].set_ylabel('Salinity diff. [ppt]')
+    ax[2].set_ylabel('Dimensionless Temperature')
+    ax[2].set_xlabel('Dimensionless Salinity')
+    return fig, ax
+
+#Plot T vs t, S vs t, and T vs S phase portrait. The T and S in the phase portrait
+#are rescaled to a dimensionless form.
+def plot_truth_with_phase(ax,model,xx,yy):
+    times = np.linspace(ax[0].get_xlim()[0], ax[0].get_xlim()[1], np.size(xx,0)) 
+    
+    states=array2states(xx)
+    TH = np.array([s.regime=='TH' for s in states], dtype=bool)
+    temp = np.reshape(np.diff([s.temp[0] for s in states],axis=1), (-1))
+    salt = np.reshape(np.diff([s.salt[0] for s in states],axis=1), (-1))
+    
+    #Rescale the salt and heat
+    temp_divisors = np.array([model.temp_scale(state) for state in states])
+    salt_divisors = np.array([model.salt_scale(state) for state in states])
+    scaled_temp = np.divide(temp ,temp_divisors)
+    scaled_salt = np.divide(salt ,salt_divisors)
+    #
+    
+    #TH
+    mask = np.where(~TH, np.nan, 1.)
+    ax[0].plot(times, temp * mask, 'b-', alpha=.7)
+    ax[1].plot(times, salt * mask, 'b-', alpha=.7)
+    ax[2].plot(scaled_salt * mask, scaled_temp * mask, 'b-', alpha=.7)
+    
+    #SA
+    mask = np.where(TH, np.nan, 1.)
+    ax[0].plot(times, temp * mask, 'r-', alpha=.7)
+    ax[1].plot(times, salt * mask, 'r-', alpha=.7)
+    ax[2].plot(scaled_salt * mask, scaled_temp * mask, 'r-', alpha=.7)
+    
+    #accentuate initial conditions in phase portrait
+    ax[2].plot(scaled_salt[0],scaled_temp[0],'go')
+    
+    #Plot T=S line for reference
+    axlim = max(scaled_temp.max(),scaled_salt.max())
+    ax[2].plot(np.linspace(0,axlim),np.linspace(0,axlim), color="m", linestyle=':')
+    
+    
+    if len(yy)>0:
+        timeos = times[1:len(yy)+1]
+        
+        for to,y in zip(timeos,yy):
+            ax[0].errorbar(to,np.diff(y[0:2]),.5,color='k')
+            ax[1].errorbar(to,np.diff(y[2:4]),.05,color='k')
+            #add dots at actual measurement
+            ax[0].plot(to, y[1]-y[0], 'bo', markersize=.8, color='orange')
+            ax[1].plot(to, y[3]-y[2], 'bo', markersize=.8, color='orange')
+
+#plots all equilibrium solutions at every timestep.
+def plot_all_eq(ax, tseq, model, xx, p=None):
+    times = tseq.tt/year
+    
+    # Equilibrium values
+    states=array2states(xx)
+    for i in range(len(times)):
+        state = states[i]
+        trans_eq = model.trans_eq(state)
+        temp_eq = model.temp_eq(state, trans_eq)
+        salt_eq = model.salt_eq(state, trans_eq)
+
+        for T, S in zip(temp_eq, salt_eq):
+            ax[0].plot(times[i], T, 'go', markersize=1)
+            ax[1].plot(times[i], S, 'go', markersize=1)
+            
+    if p is not None:
+        msg = "{:.1f}% SA".format(p)
+        ax[1].annotate(msg, xy=(0.05, .8), xycoords='axes fraction')
 
 def plot_eq(ax, tseq, model, p=None):
     times = tseq.tt/year

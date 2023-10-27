@@ -16,11 +16,10 @@ def exp_clima_forcing(N=100, seed=1000):
     #Time period over which climate change takes place
     T_warming=100*stommel.year
     #Data assimilation period in this or other experiments.
-    Tda = 20 * stommel.year
+    Tda = 20 * stommel.year  # time period over which DA takes place.
     # Timestepping. Timesteps of 1 day, running for 200 year.
-    tseq = modelling.Chronology(stommel.year, 
-                                kko=np.array([],dtype=int), 
-                                T=200*stommel.year, BurnIn=0)  # 1 observation/year
+    tseq = modelling.Chronology(stommel.year/12, kko=np.array([], dtype=int),
+                                T=50*stommel.year, BurnIn=0)  # no DA
     #Create model
     model = stommel.StommelModel()
     #Heat air fluxes 
@@ -33,6 +32,8 @@ def exp_clima_forcing(N=100, seed=1000):
     #Add random temperature perturbations with std dev. of 2C
     noised = [stommel.add_noise(func, seed=seed+n*20+1, sig=np.array([2.,2.])) 
               for n,func in enumerate(trended)]
+    default_temps =  [stommel.merge_functions(Tda, noised[0], func2)
+                      for func2 in noised]
     #For time<Tda all ensemble member n uses noised[0] after that noised[n]
     functions = [stommel.merge_functions(Tda, noised[0], func) 
                  for func in noised]
@@ -43,6 +44,9 @@ def exp_clima_forcing(N=100, seed=1000):
     #Add random salinity perturbations with std dev. of 0.2ppt
     noised = [stommel.add_noise(func, seed=seed+n*20+2, sig=np.array([.2,.2])) 
               for n,func in enumerate(functions)]
+
+    default_salts = [stommel.merge_functions(Tda, noised[0], func2)
+                 for func2 in noised]
     #For time<Tda all ensemble member n uses noised[0] after that noised[n]
     functions = [stommel.merge_functions(Tda, noised[0], func) 
                  for func in noised]
@@ -59,6 +63,13 @@ def exp_clima_forcing(N=100, seed=1000):
     model.fluxes.append(stommel.EPFlux(functions))
     #Default nitial conditions
     x0 = model.x0
+
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
+                                                        stommel.Bhat(4.0,5.0), 0.01)
+    temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
+    salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
+    model.fluxes.append(stommel.TempAirFlux(temp_forcings))
+    model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
     #Variance in initial conditions and parameters.
     B = stommel.State().zero()
     B.temp += 0.5**2 #C2
@@ -90,13 +101,14 @@ if __name__=='__main__':
     Efor, Eana = xp.assimilate(HMM, xx, yy)
     
     #Plot
-    fig, ax = stommel.time_figure(HMM.tseq)    
+    fig, ax = stommel.time_figure_with_phase(HMM.tseq)    
     for n in range(np.size(Efor,1)):
-        stommel.plot_truth(ax, Efor[:,n,:], yy)
+        stommel.plot_truth_with_phase(ax, model,Efor[:,n,:], yy)
         
     #Add equilibrium based on unperturbed initial conditions. 
     model.ens_member=0
     stommel.plot_eq(ax, HMM.tseq, model, stommel.prob_change(Efor) * 100.)
+    stommel.plot_all_eq(ax, HMM.tseq, model, xx, stommel.prob_change(Efor) * 100.)
     
     #Save figure 
     fig.savefig(os.path.join(stommel.fig_dir, 'clima_forcing.png'),
