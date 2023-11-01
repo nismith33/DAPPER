@@ -8,10 +8,19 @@ from dapper.mods.integration import rk4
 import dapper.mods as modelling
 import matplotlib.pyplot as plt
 import dataclasses
+import os
+import pickle as pkl
 from abc import ABC, abstractmethod
 
 #Directory to store figures. 
 fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
+hadley_file = "/home/ivo/Downloads/EN.4.2.2.analyses.g10.2019/boxed_hadley.pkl"
+if os.path.exists(hadley_file):
+    with open(hadley_file, 'rb') as stream:
+        hadley = pkl.load(stream)
+        ref = np.mean(hadley['yy'], axis=0)
+        cross_area = 0.5*(hadley['geo_pole']['dx'] * hadley['geo_pole']['dz'] +
+                          hadley['geo_eq']['dx'] * hadley['geo_eq']['dz'])
 
 mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365 #convert year to seconds
@@ -107,12 +116,16 @@ class LinearEquationState:
 #Meriodional overturning 
 Q_overturning = 18e6 #m3s-1
 #Estimated depth mixed layer
-mixing_depth = 450.0 #m (based on 2019 Hadley data)
+mixing_depth = 10.0 #m (based on 2019 Hadley data)
 #Estimated overturning
 eos = LinearEquationState()
-rho_pole = eos(3.42091822,5.44733642) * 1.74591451e+09
-rho_eq = eos(5.44733642, 34.7274021) * 6.88146469e+09
-gamma_ref = Q_overturning * eos.rho_ref / (rho_pole - rho_eq)
+rho_pole = eos(ref[0], ref[2])
+rho_eq = eos(ref[1], ref[3])
+gamma_ref = Q_overturning * eos.rho_ref / (rho_pole - rho_eq) / cross_area
+#Default diffusion 
+eta = np.array([np.nan,np.nan,.3])
+temp_diff = 1.e-5  
+salt_diff = eta[2] * temp_diff
 #Ice volume greenland ice sheet 
 V_ice = 1710000 * 2 * 1e9 #m3
 
@@ -122,13 +135,13 @@ class State:
     """Class containing all attributes that make up a physical state."""
     
     #temperature in ocean basin
-    temp: np.ndarray = np.array([[3.42091822, 5.44733642]]) #C 6,18
+    temp: np.ndarray = np.array([ref[0:2]]) #C 6,18
     #salinity in ocean basis
-    salt: np.ndarray = np.array([[34.9256028, 34.7274021]]) #ppt 35,36.5
-    #surface salinity flux coefficient
-    salt_diff: float = 3e-4 / mixing_depth / mm2m #m2/s/m = 1e3 mm/s
+    salt: np.ndarray = np.array([ref[2:4]]) #ppt 35,36.5
     #surface heat flux coefficient
-    temp_diff: float = 1e-3 / mixing_depth / mm2m #m2/s/m
+    temp_diff: np.ndarray = temp_diff / mm2m
+    #surface salinity flux coefficient
+    salt_diff: np.ndarray = salt_diff / mm2m
     #advective transport flux ceofficient 
     gamma: float = 0.0
     #time associated with state
@@ -312,9 +325,10 @@ class StommelModel:
     """Class containing all attributes and methods to represent the Stommel model."""
     
     #Geometry of basin 
-    dz: np.ndarray = np.array([[5190.58094298, 5190.58102035]]) #m depth
-    dy: np.ndarray = np.array([[20938692., 19258160.]]) #m latitude
-    dx: np.ndarray = np.array([[ 336362.0625, 1325760.    ]]) #m longitude 
+    pole, eq = hadley['geo_pole'], hadley['geo_eq']
+    dz: np.ndarray = np.array([[pole['dz'], eq['dz']]]) #m depth
+    dy: np.ndarray = np.array([[pole['dy'], eq['dy']]]) #m latitude
+    dx: np.ndarray = np.array([[pole['dx'], eq['dx']]]) #m longitude 
     V: np.ndarray = dx * dy * dz
     
     #Time
@@ -411,6 +425,7 @@ class StommelModel:
         #Cross-section cells 
         Aleft = self.dz[:,:-1] * self.dx[:,:-1] 
         Aright = self.dz[:,1:] * self.dx[:,1:] 
+        
         
         #Convergence horizontal fluxes. 
         for flux in self.fluxes:
@@ -529,24 +544,29 @@ class StommelModel:
         f = lambda q: (q - self.eta1(state) / (1+np.abs(q)) + 
                        self.eta2(state) / (self.eta3(state)+np.abs(q)))
         
-        #Evaluate values on grid. 
-        q  = np.linspace(-3,3,30000)     
-        fq = f(q)
-        q=.5*q[1:]+.5*q[:-1]
-        fq=fq[1:]*fq[:-1]
+        roots = []
+        q  = np.linspace(-3,3,30000) 
+        while len(roots)==0: 
+            #Evaluate values on grid. 
+            fq = f(q)
+            q=.5*q[1:]+.5*q[:-1]
+            fq=fq[1:]*fq[:-1]
         
-        #Find roots
-        roots = [q1 for q1,f1 in zip(q,fq) if f1<0.]
+            #Find roots
+            roots = [q1 for q1,f1 in zip(q,fq) if f1<0.]
+            
+            #Expand search area
+            q *= 2
         
         return np.array(roots) * self.trans_scale(state) 
     
 def default_air_temp(N):
     """ Unperturbed air temperature. """
-    return np.array([lambda t: np.array([ 5.9034582 , 11.52102703]) for _ in range(N+1)], dtype=func_type)
+    return np.array([lambda t: hadley['temperature'] for _ in range(N+1)], dtype=func_type)
     
 def default_air_salt(N):
     """ Unperturbed air salinity."""
-    return np.array([lambda t: np.array([35.03041687, 35.37372758]) for _ in range(N+1)], dtype=func_type)
+    return np.array([lambda t: hadley['salinity'] for _ in range(N+1)], dtype=func_type)
 
 def default_air_ep(N, ep=np.array([0.,0.])):
     """ Unperturbed air salinity."""
