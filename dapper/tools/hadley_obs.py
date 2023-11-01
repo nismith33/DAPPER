@@ -172,7 +172,9 @@ class HadleyObs:
         
         data = data.assign(area=(['lat', 'lon'], np.abs(areas)))
         data = data.assign(dx=(['lat','lon'], np.abs(dx)))
-        data = data.assign(dy=(['lat','lon'], np.abs(dy)))
+        data = data.assign(dy=(['lat','lon'], np.abs(dy)))        
+        data = data.assign(width=(['lat'], np.nansum(np.abs(dy),axis=1)))
+        data = data.assign(height=(['lon'], np.nansum(np.abs(dx),axis=0)))
 
         return data
 
@@ -187,6 +189,10 @@ class HadleyObs:
         dz = np.ones((np.size(depth, 0), np.size(
             area, 1), np.size(area, 2))) * np.nan
         dz[1:-1, :, :] = 0.5*(depth[2:, :, :] - depth[:-2, :, :]) * area
+        
+        #Expand to top 
+        dz[0,:,:] = dz[1,:,:]
+        
 
         return data.assign(volume=(['depth', 'lat', 'lon'], np.abs(dz)))
 
@@ -217,6 +223,14 @@ class StommelClusterer:
                   (34.899044, -87.998876), (60., -64.),
                   (70.165621, -45.0),
                   (70., 23.5), (54.168530, -9.246100)]
+        
+        points = [(35.955065, -5.606114), (23.5, 0.095069),
+                  (23.5, -60.626643), (23.5, -60.718661),
+                  (23.5, -60.683383), (27.043391, -79.990489),
+                  (34.899044, -87.998876), (60., -64.),
+                  (70.165621, -45.0),
+                  (70., 23.5), (54.168530, -9.246100)]
+        
         poly = shapely.Polygon(points)
 
         # Mask with grid points in North Atlantic.
@@ -418,7 +432,30 @@ class StommelClusterer:
 
         # Return lists of indices for each cluster.
         return clusters
+    
+    def cluster_top(self, indices):
+        clusters = [[], []]
+        
+        # Observed fields
+        temp = np.array(self.data['temperature'].mean('time'))
+        
+        for (iy1, ix1) in indices:
+            # Depths for which observations are available.
+            mask = ~np.isnan(temp[:, iy1, ix1])
+            
+            if not mask[0]:
+                continue 
+            
+            for iz1, mask1 in enumerate(mask):
+                z1 = self.data['depth'][iz1]
+                if mask1 and iz1<=0:
+                    clusters[0] += [(iz1,iy1,ix1)]
+                elif mask1 and z1<np.inf:
+                    clusters[1] += [(iz1,iy1,ix1)]
 
+        # Return lists of indices for each cluster.
+        return clusters
+        
 
 def plot_cluster3d(ax, data, indices):
     """
@@ -499,6 +536,7 @@ def average_cluster(data, indices):
     data2d = data.isel(lat=xr.DataArray(indices2d[0], dims='ind2d'),
                        lon=xr.DataArray(indices2d[1], dims='ind2d'),
                        )
+    
     # Average lon, lat
     for field in ['lat', 'lon']:
         data2d[field] = (data2d[field] * data2d['area']
@@ -513,12 +551,12 @@ def average_cluster(data, indices):
                        lat=xr.DataArray(indices3d[1], dims='ind3d'),
                        lon=xr.DataArray(indices3d[2], dims='ind3d'),
                        )
+    
     # Observed fields.
     for field in ['temperature', 'salinity']:
         w = data3d['volume'] / data3d[field+'_uncertainty']**2
-        data3d[field] = (data3d[field] * w).mean('ind3d') / w.mean('ind3d')
-        data3d[field +
-               '_uncertainty'] = (data3d['volume'].mean('ind3d') / w.mean('ind3d'))**0.5
+        data3d[field] = (data3d[field] * w).sum('ind3d') / w.sum('ind3d')
+        data3d[field +'_uncertainty'] = (data3d['volume'].mean('ind3d') / w.mean('ind3d'))**0.5
         output = {**output, field: data3d[field], field +
                   '_uncertainty': data3d[field+'_uncertainty']}
 
@@ -529,11 +567,45 @@ def average_cluster(data, indices):
 
     # Volume
     output = {**output, 'volume': data3d['volume'].sum('ind3d')}
+    
+    
 
     return xr.Dataset(output)
 
+def cross_section(data, indices, label):
+    """
+    Calculate the cross-section between the boxes. 
+    """
+    indices = np.array(indices)
+    indices3d = indices.T
+    
+    if label == 'pole':
+        interface_index = np.min 
+    elif label == 'equator':
+        interface_index = np.max
+    
+    # Interface 
+    mask = np.zeros_like(indices3d[0])
+    for ilon in np.unique(indices3d[2]):
+        ilat = interface_index(indices3d[1][indices3d[2]==ilon])
+        mask = np.logical_or(mask, np.logical_and(indices3d[1]==ilat,indices3d[2]==ilon))
+    
+    data3d = data.isel(depth=xr.DataArray(indices3d[0][mask], dims='ind3d'),
+                       lat=xr.DataArray(indices3d[1][mask], dims='ind3d'),
+                       lon=xr.DataArray(indices3d[2][mask], dims='ind3d'),
+                       )
+    
+    areaInter = data3d['volume'].sum('ind3d') / data3d['dy'].mean('ind3d')
+    return float(areaInter)
+    
+
 
 def label_indices(data, indices):
+    """
+    Given a set of indices sets determine for each set whether they corresponds
+    to pole or equator box and surface or ocean box. 
+    
+    """
     if len(indices) != 4:
         msg = "4 clusters must be provided."
         raise ValueError(msg)
@@ -724,7 +796,7 @@ h_indices = clusterer.cluster_horizontal(clusterer.select_atlantic())
 # Divide each horizontal cluster in 2 vertical clusters.
 hv_indices = []
 for indices in h_indices:
-    hv_indices += clusterer.cluster1d_vertical(indices)
+    hv_indices += clusterer.cluster_top(indices)
 
 # Create time series for each of the clusters and plot it.
 plt.close('all')
@@ -747,12 +819,41 @@ for ax in axes.ravel():
 
 # Create observations that can be assimilated.
 yy, mu, R = create_yy(output, hv_indices)
-# Save into file
-with open(os.path.join(DIR, 'yy.pkl'), 'wb') as stream:
-    pkl.dump({'yy': yy, 'R': R, 'mu': mu}, stream)
 
 # Calculate surface forcing
 surface_data = create_surface(output, hv_indices)
+
+
+#Save all relevant data into file. 
+# Save into file
+boxed_hadley = {'yy': yy, 'R': R, 'mu': mu, **surface_data}
+labels = label_indices(output, hv_indices)
+geo = {'cross':0.,'area':0.,'vol':0.}
+for label, index in zip(labels, hv_indices):
+    avg = average_cluster(output, index)
+    if all(label==['pole','ocean']):
+        geo['cross'] = geo['cross']+0.5*cross_section(output,index,label[0])
+        geo['area']  = geo['area']+float(avg['area'])
+        geo['vol']   = geo['vol']+float(avg['volume'])
+    if all(label==['equator','ocean']):
+        geo['cross'] = geo['cross']+0.5*cross_section(output,index,label[0])
+        geo['area']  = geo['area']+float(avg['area'])
+        geo['vol']   = geo['vol']+float(avg['volume'])
+        
+dz = geo['vol'] / geo['area'] 
+dx = geo['cross'] / dz
+for label, index in zip(labels, hv_indices):
+    avg = average_cluster(output, index)
+    #Depth must be equal for both. 
+    dy = float(avg['volume']) / (dx*dz)
+    geo = {'dz':dz,'dx':dx,'dy':dy}
+    if all(label==['pole','ocean']):
+        boxed_hadley = {**boxed_hadley, 'geo_pole':geo}
+    if all(label==['equator','ocean']):
+        boxed_hadley = {**boxed_hadley, 'geo_eq':geo}
+        
+with open(os.path.join(DIR, 'boxed_hadley.pkl'), 'wb') as stream:
+    pkl.dump(boxed_hadley, stream)
 
 # Plot clusters.
 fig = plt.figure(figsize=(11, 8))
