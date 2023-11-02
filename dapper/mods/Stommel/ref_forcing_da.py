@@ -20,7 +20,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
     Tda = 20 * stommel.year #time period over which DA takes place. 
     kko = np.arange(1, len(hadley['yy'])+1)
     tseq = modelling.Chronology(stommel.year/12, kko=kko, 
-                                T=1*stommel.year, BurnIn=0)  # 1 observation/month
+                                T=2*stommel.year, BurnIn=0)  # 1 observation/month
     # Create default Stommel model
     model = stommel.StommelModel()
     #Switch on heat exchange with atmosphere. 
@@ -28,10 +28,10 @@ def exp_ref_forcing_da(N=100, seed=1000):
     default_temps = stommel.default_air_temp(N)
     default_salts = stommel.default_air_salt(N)
     #Add additional periodic forcing 
-    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
-                                                        stommel.Bhat(4.0,5.0), 0.01)
-    temp_forcings = [f0 for f0,f1 in zip(default_temps,temp_forcings)]
-    salt_forcings = [f0 for f0,f1 in zip(default_salts,salt_forcings)]
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 0.0, 
+                                                        stommel.Bhat(0.0,0.0), 0.00)
+    temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
+    salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
     model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
     # Initial conditions
@@ -51,7 +51,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
            'noise': 0
            }
     # Observation
-    Obs = model.obs_ocean()
+    Obs = model.obs_hadley()
     # Create model.
     HMM = modelling.HiddenMarkovModel(Dyn, Obs, tseq, X0)
     # Create DA
@@ -74,8 +74,7 @@ if __name__=='__main__':
         
     #Add equilibrium based on unperturbed initial conditions. 
     model.ens_member=0
-    stommel.plot_eq(ax, HMM.tseq, model, stommel.prob_change(Efor) * 100.)
-    stommel.plot_eq(ax, HMM.tseq, model, xx, stommel.prob_change(Efor) * 100.)
+    stommel.plot_eq(ax, HMM.tseq, model, stommel.array2states(np.mean(Efor,axis=1)))
     
     #Save figure 
     fig_dir='/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/'

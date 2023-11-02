@@ -24,8 +24,8 @@ x0.salt += np.array([[0.,.0]]) #Move initial state away from equilibrium
 #Add additional periodic forcing 
 temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
                                                     stommel.Bhat(4.0,5.0), 0.0)
-temp_forcings = [f0 for f0,f1 in zip(stommel.default_air_temp(N),temp_forcings)]
-salt_forcings = [f0 for f0,f1 in zip(stommel.default_air_salt(N),salt_forcings)]
+temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.default_air_temp(N),temp_forcings)]
+salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.default_air_salt(N),salt_forcings)]
 model.fluxes.append(stommel.TempAirFlux(temp_forcings))
 model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
 #Set initial conditions. 
