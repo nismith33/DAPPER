@@ -784,7 +784,7 @@ def plot_all_eq(ax, tseq, model, xx, p=None):
 def plot_eq(ax, tseq, model, states=None, p=None):
     times, temp_eq, salt_eq = np.array([]), np.array([]), np.array([])
     if states is None:
-        states = model.init_state * np.ones_like(tseq.tt)
+        states = [model.init_state for _ in range(len(times))]
         
     for time,state in zip(tseq.tt/year, states):
         trans_eq1 = model.trans_eq(state)
