@@ -378,6 +378,33 @@ class StommelModel:
         """Set default fluxes."""
         return [AdvectiveFlux(self.eos)]
     
+    def obs_hadley(self):
+        #Size of observations.
+        M = 2*np.size(self.dz, 1)
+        
+        #Function for taking a observation from single state. 
+        def obs_TS1(x, t):
+            self.state.time = t
+            self.state.from_vector(x)
+            return np.append(self.state.temp[0], self.state.salt[0])
+        
+        #Function for taking observation from ensemble of states. 
+        def obs_model(x, t):            
+            if np.ndim(x)==1:
+                return obs_TS1(x, t)
+            elif np.ndim(x)==2:
+                return np.array([obs_TS1(x1,t) for x1 in x])
+            else:
+                msg = "x must be 1D or 2D array."
+                raise TypeError(msg)
+          
+        
+        #DAPPER Observation operator
+        Obs = {'M':M, 'model': obs_model, 'linear': sample2linear(obs_model),
+               'noise': modelling.GaussRV(C=hadley['R'], mu=np.zeros_like(hadley['R']))}
+        
+        return Obs
+    
     def obs_ocean(self, sig_temp=0.5, sig_salt=0.05):
         """ Sampling operator for ocean temperature and salinity. """
         
@@ -731,8 +758,8 @@ def plot_truth_with_phase(ax,model,xx,yy):
             ax[0].errorbar(to,np.diff(y[0:2]),.5,color='k')
             ax[1].errorbar(to,np.diff(y[2:4]),.05,color='k')
             #add dots at actual measurement
-            ax[0].plot(to, y[1]-y[0], 'bo', markersize=.8, color='orange')
-            ax[1].plot(to, y[3]-y[2], 'bo', markersize=.8, color='orange')
+            ax[0].plot(to, y[1]-y[0], 'o', markersize=.8, color='orange')
+            ax[1].plot(to, y[3]-y[2], 'o', markersize=.8, color='orange')
 
 #plots all equilibrium solutions at every timestep.
 def plot_all_eq(ax, tseq, model, xx, p=None):
@@ -754,18 +781,23 @@ def plot_all_eq(ax, tseq, model, xx, p=None):
         msg = "{:.1f}% SA".format(p)
         ax[1].annotate(msg, xy=(0.05, .8), xycoords='axes fraction')
 
-def plot_eq(ax, tseq, model, p=None):
-    times = tseq.tt/year
-    
-    # Equilibrium values
-    state = model.init_state
-    trans_eq = model.trans_eq(state)
-    temp_eq = model.temp_eq(state, trans_eq)
-    salt_eq = model.salt_eq(state, trans_eq)
-
+def plot_eq(ax, tseq, model, states=None, p=None):
+    times, temp_eq, salt_eq = np.array([]), np.array([]), np.array([])
+    if states is None:
+        states = model.init_state * np.ones_like(tseq.tt)
+        
+    for time,state in zip(tseq.tt/year, states):
+        trans_eq1 = model.trans_eq(state)
+        temp_eq1 = model.temp_eq(state, trans_eq1)
+        salt_eq1 = model.salt_eq(state, trans_eq1)
+        
+        times = np.append(times, np.ones_like(trans_eq1) * time)
+        temp_eq = np.append(temp_eq, temp_eq1)
+        salt_eq = np.append(salt_eq, salt_eq1)
+        
     for T, S in zip(temp_eq, salt_eq):
-        ax[0].plot(times, np.ones_like(times) * T, 'k--')
-        ax[1].plot(times, np.ones_like(times) * S, 'k--')
+        ax[0].scatter(times, temp_eq, c='k', s=1)
+        ax[1].scatter(times, salt_eq, c='k', s=1)
         
     if p is not None:
         msg = "{:.1f}% SA".format(p)
