@@ -656,8 +656,8 @@ def create_yy(data, indices, dt=1):
             equator = average_cluster(data, index)
 
     # Observations
-    yy = np.array([pole['temperature'], equator['temperature'], pole['salinity'],
-                   equator['salinity']])
+    yy = np.array([pole['temperature'][1:], equator['temperature'][1:], 
+                   pole['salinity'][1:], equator['salinity'][1:]])
     yy[:2] = kelvin2celsius(yy[:2])
     yy = list(yy.T)
     
@@ -733,10 +733,10 @@ def create_model(data, indices):
 
     #Set initial conditions
     x0 = model.init_state 
-    x0.temp = np.array([[kelvin2celsius(pole['temperature'].mean('time')),
-                         kelvin2celsius(equator['temperature'].mean('time'))]], dtype=float)
-    x0.salt = np.array([[pole['salinity'].mean('time'),
-                         equator['salinity'].mean('time')]], dtype=float)
+    x0.temp = np.array([[kelvin2celsius(pole['temperature'][0]),
+                         kelvin2celsius(equator['temperature'][0])]], dtype=float)
+    x0.salt = np.array([[pole['salinity'][0],
+                         equator['salinity'][0]]], dtype=float)
     model.init_state = x0 
     
     return model
@@ -765,7 +765,9 @@ def create_surface(data, indices):
             pole = average_cluster(data, index)
         if all(label==['equator','surface']):
             equator = average_cluster(data, index)
+            
 
+    #Calculate mean surface temp/salt and standard deviation. 
     means = {}
     for field in ['temperature', 'salinity']:
         means[field], means['sig_'+field] = np.empty((2,)), np.empty((2,))
@@ -773,7 +775,13 @@ def create_surface(data, indices):
             w = 1/data[field+'_uncertainty']**2
             means[field][box] = float((data[field]*w).mean('time') / w.mean('time'))
             means['sig_'+field][box] = data[field].std('time')
-    
+            
+        diff = equator[field] - pole[field]
+        diff = 0.5*(diff - diff.mean('time'))
+        ang, amp, phase = harmonic_fit(diff)
+        means['harmonic_'+field] = (ang, amp, phase)
+            
+
     means['mixing_depth'] = np.empty((2,))
     for box, data in enumerate([pole,equator]):  
         means['mixing_depth'][box] = float(data['depth']) 
@@ -781,6 +789,26 @@ def create_surface(data, indices):
     means['temperature'] = kelvin2celsius(means['temperature'])
     
     return means
+
+def harmonic_fit(data, period=np.timedelta64(int(stommel.year),'s')):
+    #Time relative to first time. 
+    times = np.array(data['time'] - data['time'][0]) / period
+    
+    #Values
+    data = np.array(data)
+    X = np.array([np.cos(2*np.pi*times), np.sin(2*np.pi*times)]).T
+    X = np.linalg.pinv(X)
+    
+    #Fit
+    coef = X @ data
+    amplitude = np.hypot(coef[1],coef[0])
+    phase = np.arctan2(coef[1],coef[0])
+    angular = 2 * np.pi / float( period / np.timedelta64(1,'s') )
+    
+    return angular, amplitude, phase
+    
+    
+    
 
 
 # Directory containing files downloaded from Hadley server.

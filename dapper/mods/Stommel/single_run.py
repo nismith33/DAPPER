@@ -13,8 +13,8 @@ import os
 # Number of ensemble members
 N = 0
 # Timestepping. Timesteps of 1 day, running for 400 year.
-tseq = modelling.Chronology(stommel.year, kko=np.array([],dtype=int), 
-                            T=100*stommel.year, BurnIn=0)  # 1 observation/year
+tseq = modelling.Chronology(stommel.year/12, kko=np.array([],dtype=int), 
+                            T=10*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
 # Adjust default initial conditions.
@@ -22,10 +22,11 @@ x0 = model.init_state
 x0.temp += np.array([[0.,0.]])
 x0.salt += np.array([[0.,.0]]) #Move initial state away from equilibrium
 #Add additional periodic forcing 
-temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 5.0, 
-                                                    stommel.Bhat(4.0,5.0), 0.0)
-temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.default_air_temp(N),temp_forcings)]
-salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.default_air_salt(N),salt_forcings)]
+budd = (model, model.init_state, 86., 0.0, stommel.Bhat(0.0,0.), 0.0) #seasonal forcing
+period, amplitude_T, amplitude_S, epsilon = stommel.budd_scale(*budd)
+temp_forcings, salt_forcings = stommel.budd_forcing(*budd)
+temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.hadley_air_temp(N),temp_forcings)]
+salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(stommel.hadley_air_salt(N),salt_forcings)]
 model.fluxes.append(stommel.TempAirFlux(temp_forcings))
 model.fluxes.append(stommel.SaltAirFlux(salt_forcings))
 #Set initial conditions. 
@@ -49,7 +50,7 @@ xx, yy = HMM.simulate()
 #Create figure
 fig,ax=stommel.time_figure(tseq)
 stommel.plot_truth(ax, xx, yy)
-stommel.plot_eq(ax, tseq, model)
+stommel.plot_eq(ax, tseq, model, stommel.array2states(xx, tseq.times))
 
 #Save figure 
 #fig.savefig(os.path.join(stommel.fig_dir, 'single_run.png'),

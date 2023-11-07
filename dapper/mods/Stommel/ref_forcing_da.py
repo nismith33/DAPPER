@@ -25,10 +25,10 @@ def exp_ref_forcing_da(N=100, seed=1000):
     model = stommel.StommelModel()
     #Switch on heat exchange with atmosphere. 
     #Start with default stationary surface temperature and salinity. 
-    default_temps = stommel.default_air_temp(N)
-    default_salts = stommel.default_air_salt(N)
+    default_temps = stommel.hadley_air_temp(N)
+    default_salts = stommel.hadley_air_salt(N)
     #Add additional periodic forcing 
-    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 10., 0.0, 
+    temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 86., 0.0, 
                                                         stommel.Bhat(0.0,0.0), 0.00)
     temp_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_temps,temp_forcings)]
     salt_forcings = [stommel.add_functions(f0,f1) for f0,f1 in zip(default_salts,salt_forcings)]
@@ -74,13 +74,8 @@ if __name__=='__main__':
         
     #Add equilibrium based on unperturbed initial conditions. 
     model.ens_member=0
-    stommel.plot_eq(ax, HMM.tseq, model, stommel.array2states(np.mean(Efor,axis=1)))
-    
-    #Save figure 
-    fig_dir='/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/'
-    fig.savefig(os.path.join(stommel.fig_dir, 'forcing_noise_da.png'),
-                format='png', dpi=500)
-    
+    stommel.plot_eq(ax, HMM.tseq, model, stommel.array2states(np.mean(Efor,axis=1),HMM.tseq.times))
+
     
 
     
