@@ -112,6 +112,9 @@ class Chronology():
             self.Tplot = BurnIn
         else:
             self.Tplot = Tplot
+            
+        self.times = np.arange(0, self.K+1) * self.dt 
+        self.otimes = np.arange(1, self.Ko+1) * self.Ko
 
     ######################################
     # "State vars". Can be set (changed).
