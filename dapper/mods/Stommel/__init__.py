@@ -23,7 +23,7 @@ if os.path.exists(hadley_file):
                           hadley['geo_eq']['dx'] * hadley['geo_eq']['dz'])
 
 mm2m = 1e-3 #convert millimeter to meter
-year = 86400 * 365 #convert year to seconds
+year = 86400 * 365.25 #convert year to seconds
 func_type = type(lambda:0.0)
 
 def Bhat(A,B):
@@ -31,6 +31,56 @@ def Bhat(A,B):
     Calculate Bhat from A and B as defined in Budd et al. 
     """
     return B - A
+
+def budd_scale(model, state, Omega, B, Bhat, epsilon):
+    """ 
+    Transform dimensionless parameters in 
+    
+    Budd, C, Griffith, C & Kuske, R 2022, 'Dynamic tipping in the non-smooth Stommel-box model, with fast
+    oscillatory forcing', Physica D: Nonlinear Phenomena, vol. 432, 132948.
+    https://doi.org/10.1016/j.physd.2021.132948
+    
+    to parameters with dimensions. 
+    
+    Parameters
+    ----------
+    model : StommelModel object
+        Object that contains parameters model like volume. 
+    state : State object
+        Object that contains state parameters like diffusion coefficients. 
+    Omega : float 
+        Nondimensional angular frequency periodic forcing. See Budd et al. 
+    B : float 
+        Nondimensional amplitude eta_2. See Budd et al. 
+    Bhat : float 
+        Nondimensional amplitude eta_1. See Budd et al. 
+    epsilon : float 
+        Nondimensional change rate eta_1. See Budd et al. 
+        
+    Returns
+    -------
+    period:
+        Oscillation period is s. 
+    amplitude_T:
+        Amplitude of temperature oscillations in C. 
+    amplitude_S:
+        Amplitude of salinity oscillations in ppt. 
+    epsilon:
+        Salinity increase rate pole in ppt/second. 
+        
+    """
+    
+    #Dimensionless -> dimensional
+    period = 2*np.pi/ Omega * model.time_scale(state)
+    #amplitude temperature change due to periodic change eta1
+    amplitude_T = 0.5 * B    * model.temp_scale(state) 
+    #amplitude salinity change due to periodic change eta2
+    amplitude_S = 0.5 * Bhat * model.salt_scale(state) / model.eta3(state)
+    #rate salinity change due to  
+    epsilon = epsilon * model.salt_scale(state) / model.eta3(state) #linear change eta2
+    epsilon = epsilon / model.time_scale(state) #linear change eta2
+    
+    return period, amplitude_T, amplitude_S, epsilon
 
 def budd_forcing(model, state, Omega, B, Bhat, epsilon=0.0):
     """Create forcing functions based on 
@@ -55,23 +105,20 @@ def budd_forcing(model, state, Omega, B, Bhat, epsilon=0.0):
         Nondimensional change rate eta_1. See Budd et al. 
     
     """
-    #Dimensionless -> dimensional
-    Omega = Omega / model.time_scale(state)
-    #amplitude temperature change due to periodic change eta1
-    B    = B    * model.temp_scale(state) 
-    #amplitude salinity change due to periodic change eta2
-    Bhat = Bhat * model.salt_scale(state) / model.eta3(state)
-    #rate salinity change due to  
-    epsilon = epsilon * model.salt_scale(state) / model.eta3(state) #linear change eta2
-    epsilon = epsilon / model.time_scale(state) #linear change eta2
+   
+    #Add dimensions. 
+    period, amplitude_T, amplitude_S, epsilon = budd_scale(model, state, Omega, B, Bhat, epsilon) 
+    
+    #Angular frequency in Hz
+    Omega = 2 * np.pi / period
     
     #Forcing surface temperature to achieve fluctuations eta1
-    temp_forcings = [lambda time : np.array([-.5,.5]) * B * np.sin(Omega * time)]
+    temp_forcings = [lambda time : np.array([-1.,1.]) * amplitude_T * np.sin(Omega * time)]
     #Forcing surface salinity to achieve fluctuations eta2
-    salt_forcings = [lambda time : np.array([-.5,.5]) * Bhat * np.sin(Omega * time) 
-                     - np.array([-0.5,0.5]) * epsilon * time]
+    salt_forcings = [lambda time : np.array([-1.,1.]) * amplitude_S * np.sin(Omega * time) 
+                     - np.array([-1.0,0.0]) * epsilon * time]
     
-    return temp_forcings, salt_forcings 
+    return temp_forcings, salt_forcings
     
 
 def sample2linear(model):
@@ -189,14 +236,18 @@ class State:
         """Return size of state vector."""
         return np.size(self.to_vector())
                 
-def array2states(array):
+def array2states(array, times=np.nan):
     """Convert array with data to array of State objects."""
     shape = np.shape(array)
     array = np.reshape(array,(-1,shape[-1]))
     
+    if np.ndim(times)==0:
+        times *= np.ones((np.size(array,0)))
+    
     states = np.array([State() for v in array], dtype=State)
     for n,v in enumerate(array):
         states[n].from_vector(v)
+        states[n].time = times[n]
         
     states = np.reshape(states, shape[:-1])
         
@@ -599,6 +650,20 @@ def default_air_ep(N, ep=np.array([0.,0.])):
     """ Unperturbed air salinity."""
     return np.array([lambda t: ep for _ in range(N+1)], dtype=func_type)
 
+def hadley_air_temp(N):
+    """ Perturbed air temperature. """
+    omega, A, phi = hadley['harmonic_temperature']
+    def func(t):
+        return hadley['temperature'] + np.array([-1,1])*A*np.cos(omega * t - phi)
+    return np.array([func for _ in range(N+1)], dtype=func_type)
+
+def hadley_air_salt(N):
+    """ Perturbed air salinity. """
+    omega, A, phi = hadley['harmonic_salinity']
+    def func(t):
+        return hadley['salinity'] + np.array([-1,1])*A*np.cos(omega * t - phi)
+    return np.array([func for _ in range(N+1)], dtype=func_type)
+
 def merge_functions(T, func1, func2):
     """ Merge two functions with different time domains into 1."""
     
@@ -719,7 +784,7 @@ def time_figure_with_phase(tseq):
 def plot_truth_with_phase(ax,model,xx,yy):
     times = np.linspace(ax[0].get_xlim()[0], ax[0].get_xlim()[1], np.size(xx,0)) 
     
-    states=array2states(xx)
+    states=array2states(xx,times)
     TH = np.array([s.regime=='TH' for s in states], dtype=bool)
     temp = np.reshape(np.diff([s.temp[0] for s in states],axis=1), (-1))
     salt = np.reshape(np.diff([s.salt[0] for s in states],axis=1), (-1))
@@ -766,7 +831,7 @@ def plot_all_eq(ax, tseq, model, xx, p=None):
     times = tseq.tt/year
     
     # Equilibrium values
-    states=array2states(xx)
+    states=array2states(xx,times)
     for i in range(len(times)):
         state = states[i]
         trans_eq = model.trans_eq(state)
@@ -784,9 +849,9 @@ def plot_all_eq(ax, tseq, model, xx, p=None):
 def plot_eq(ax, tseq, model, states=None, p=None):
     times, temp_eq, salt_eq = np.array([]), np.array([]), np.array([])
     if states is None:
-        states = [model.init_state for _ in range(len(times))]
+        states = [model.init_state for _ in range(len(tseq.tt))]
         
-    for time,state in zip(tseq.tt/year, states):
+    for time,state in zip(tseq.times/year, states):
         trans_eq1 = model.trans_eq(state)
         temp_eq1 = model.temp_eq(state, trans_eq1)
         salt_eq1 = model.salt_eq(state, trans_eq1)
@@ -806,7 +871,7 @@ def plot_eq(ax, tseq, model, states=None, p=None):
 def plot_truth(ax,xx,yy):
     times = np.linspace(ax[0].get_xlim()[0], ax[0].get_xlim()[1], np.size(xx,0)) 
     
-    states=array2states(xx)
+    states=array2states(xx,times)
     TH = np.array([s.regime=='TH' for s in states], dtype=bool)
     temp = np.reshape(np.diff([s.temp[0] for s in states],axis=1), (-1))
     salt = np.reshape(np.diff([s.salt[0] for s in states],axis=1), (-1))
