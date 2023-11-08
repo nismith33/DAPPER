@@ -15,12 +15,15 @@ from abc import ABC, abstractmethod
 #Directory to store figures. 
 fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
 hadley_file = "/home/ivo/Downloads/EN.4.2.2.analyses.g10.2019/boxed_hadley.pkl"
-if os.path.exists(hadley_file):
-    with open(hadley_file, 'rb') as stream:
-        hadley = pkl.load(stream)
-        ref = np.mean(hadley['yy'], axis=0)
-        cross_area = 0.5*(hadley['geo_pole']['dx'] * hadley['geo_pole']['dz'] +
-                          hadley['geo_eq']['dx'] * hadley['geo_eq']['dz'])
+if not os.path.exists(hadley_file):
+    raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
+    
+#Import values based on Hadley EN4 observations. 
+with open(hadley_file, 'rb') as stream:
+    hadley = pkl.load(stream)
+    ref = np.mean(hadley['yy'], axis=0)
+    cross_area = 0.5*(hadley['geo_pole']['dx'] * hadley['geo_pole']['dz'] +
+                      hadley['geo_eq']['dx'] * hadley['geo_eq']['dz'])
 
 mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365.25 #convert year to seconds

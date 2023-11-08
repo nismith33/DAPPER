@@ -21,10 +21,11 @@ import sklearn as sl
 import shapely
 import matplotlib as mpl
 import pickle as pkl
-import dapper.mods.Stommel as stommel
 
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
+#SECONDS IN YEAR
+YEAR = 365.25 * 86400 #s
 
 def kelvin2celsius(temp):
     """
@@ -676,71 +677,7 @@ def create_yy(data, indices, dt=1):
     # Observationa error bias
     mu = np.zeros_like(R)
 
-    return yy, mu, R
-
-def create_model(data, indices):
-    """ 
-    This function overwrites the default values for box sizes and 
-    initial temperature and salinity in the StommelModel object with 
-    those derived from data. 
-    
-    data : xarray Dataset
-        Hadley observations data set. 
-    indices : list of int tuples 
-        Indices for each of the four North-Atlantic ocean regions as produced 
-        by StommelCluster
-        
-    
-    """
-    #Label different data
-    labels = label_indices(data,indices)
-    
-    #Stommel model
-    model = stommel.StommelModel()
-    
-    #Cluster representing ocean boxes
-    for label, index in zip(labels, indices):
-        if all(label==['pole','ocean']):
-            pindices = index
-            pole = average_cluster(data, index)
-        if all(label==['equator','ocean']):
-            eindices = index
-            equator = average_cluster(data, index)
-            
-    def geometry(data, indices):
-        indices = np.array(indices)
-        indices = np.unique(indices[:,1:], axis=0)
-        
-        #zonal
-        widths = np.zeros_like(data['dx']) 
-        for ind in indices:
-            widths[ind[0],ind[1]] = data['dx'][ind[0],ind[1]]
-        widths = np.sum(widths, axis=1)
-        dx = np.nanmean(widths)
-        
-        #meridional
-        dy = np.nansum([data['area'][i[0],i[1]] for i in indices]) / dx
-        
-        #depth 
-        V = np.nansum(output['volume'], axis=0)
-        dz = np.nansum([V[i[0],i[1]] for i in indices]) / ( dx * dy)
-        
-        return dz,dy,dx 
-        
-    model.dz[0][0], model.dy[0][0], model.dx[0][0] = geometry(data, pindices)
-    model.dz[0][1], model.dy[0][1], model.dx[0][1] = geometry(data, eindices)
-    model.V = model.dx * model.dy * model.dz
-
-    #Set initial conditions
-    x0 = model.init_state 
-    x0.temp = np.array([[kelvin2celsius(pole['temperature'][0]),
-                         kelvin2celsius(equator['temperature'][0])]], dtype=float)
-    x0.salt = np.array([[pole['salinity'][0],
-                         equator['salinity'][0]]], dtype=float)
-    model.init_state = x0 
-    
-    return model
-    
+    return yy, mu, R   
     
 def create_surface(data, indices):
     """ 
@@ -790,7 +727,7 @@ def create_surface(data, indices):
     
     return means
 
-def harmonic_fit(data, period=np.timedelta64(int(stommel.year),'s')):
+def harmonic_fit(data, period=np.timedelta64(int(YEAR),'s')):
     #Time relative to first time. 
     times = np.array(data['time'] - data['time'][0]) / period
     
