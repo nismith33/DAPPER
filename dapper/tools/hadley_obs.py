@@ -57,8 +57,9 @@ class HadleyObs:
 
     """
 
-    def __init__(self, topdir):
+    def __init__(self, topdir, chunck_size=None):
         """ Class constructor. """
+        self.chunck_size = chunck_size
 
         # Directory containing
         self.topdir = topdir
@@ -127,17 +128,23 @@ class HadleyObs:
 
         """
         # Select files within specified time range.
-        datas = []
+        
         mask = np.logical_and(self.times >= time_bounds[0],
                               self.times <= time_bounds[1])
 
         # Combine filedata into single Xarray object.
-        for file in self.filepaths[mask]:
-            datas.append(xr.open_dataset(file))
-
-        # Add time to output.
-        output = xr.concat(datas, 'time')
-
+        if self.chunck_size:
+            datas = xr.open_mfdataset(self.filepaths[mask], 
+                                      chunks={'time':self.chunck_size},
+                                      engine='netcdf4', combine='nested',
+                                      concat_dim='time')
+            output = datas
+        else:
+            datas = []
+            for file in self.filepaths:
+                datas.append(xr.open_dataset(file))
+            output = xr.concat(datas, 'time')
+            
         # Add longitude as number in range [-180,180)
         output = output.assign(lon180=np.mod(output.lon+180, 360)-180)
 
@@ -167,7 +174,7 @@ class HadleyObs:
         
         dx[1:-1,1:-1] = 0.5*(lon[1:-1,2:] - lon[1:-1,:-2]) * Jx[1:-1,1:-1]
         dx180[1:-1,1:-1] = 0.5*(lon180[1:-1,2:] - lon180[1:-1,:-2]) * Jx[1:-1,1:-1]
-        dx = np.minimum(dx,dx180)
+        dx = np.minimum(np.abs(dx), np.abs(dx180))
         dy[1:-1,1:-1] = 0.5*(lat[2:, 1:-1] - lat[:-2, 1:-1]) * Jy[1:-1,1:-1]
         areas = dx*dy
         
@@ -435,6 +442,7 @@ class StommelClusterer:
         return clusters
     
     def cluster_top(self, indices):
+        """ Seperate top layer from deeper layers. """
         clusters = [[], []]
         
         # Observed fields
@@ -456,7 +464,8 @@ class StommelClusterer:
 
         # Return lists of indices for each cluster.
         return clusters
-        
+   
+#%% Plotting routines     
 
 def plot_cluster3d(ax, data, indices):
     """
@@ -516,6 +525,8 @@ def plot_cluster2d(ax, data, indices):
     return ax
 
 
+#%% Processing routines
+
 def average_cluster(data, indices):
     """ 
     Inverse variance weighted averaging over dimension ind
@@ -556,7 +567,7 @@ def average_cluster(data, indices):
     # Observed fields.
     for field in ['temperature', 'salinity']:
         w = data3d['volume'] / data3d[field+'_uncertainty']**2
-        data3d[field] = (data3d[field] * w).sum('ind3d') / w.sum('ind3d')
+        data3d[field] = (data3d[field] * w).mean('ind3d') / w.mean('ind3d')
         data3d[field +'_uncertainty'] = (data3d['volume'].mean('ind3d') / w.mean('ind3d'))**0.5
         output = {**output, field: data3d[field], field +
                   '_uncertainty': data3d[field+'_uncertainty']}
@@ -568,8 +579,7 @@ def average_cluster(data, indices):
 
     # Volume
     output = {**output, 'volume': data3d['volume'].sum('ind3d')}
-    
-    
+      
 
     return xr.Dataset(output)
 
@@ -598,7 +608,6 @@ def cross_section(data, indices, label):
     
     areaInter = data3d['volume'].sum('ind3d') / data3d['dy'].mean('ind3d')
     return float(areaInter)
-    
 
 
 def label_indices(data, indices):
@@ -679,7 +688,7 @@ def create_yy(data, indices, dt=1):
 
     return yy, mu, R   
     
-def create_surface(data, indices):
+def create_surface(data, indices, period=np.timedelta64(int(YEAR),'s')):
     """ 
     This function calculates the mean temperature and salinity over the 
     whole time period as well as std. deviation in temperature and salinity 
@@ -694,6 +703,8 @@ def create_surface(data, indices):
         by spatial_average for each cluster.
 
     """
+    from sklearn.linear_model import LinearRegression
+    regressor = LinearRegression(fit_intercept=False, copy_X=False)
     
     # Values of observations 
     labels = label_indices(data,indices)
@@ -703,55 +714,42 @@ def create_surface(data, indices):
         if all(label==['equator','surface']):
             equator = average_cluster(data, index)
             
-
     #Calculate mean surface temp/salt and standard deviation. 
-    means = {}
+    harmonics = {'harmonic_angular' : np.array([2 * np.pi / float( period / np.timedelta64(1,'s'))])}
     for field in ['temperature', 'salinity']:
-        means[field], means['sig_'+field] = np.empty((2,)), np.empty((2,))
+        key = 'surface_'+field+'_harmonic'
+        harmonics[key] = []
         for box, data in enumerate([pole, equator]):
+            #Time relative to first time. 
+            times = np.array(data['time'] - data['time'][0]) / np.timedelta64(1,'s')
+            #Weights data 
             w = 1/data[field+'_uncertainty']**2
-            means[field][box] = float((data[field]*w).mean('time') / w.mean('time'))
-            means['sig_'+field][box] = data[field].std('time')
+            #Base function for regression. 
+            X      = np.ones((len(w),
+                              1+2*len(harmonics['harmonic_angular'])))
+            for n,omega in enumerate(harmonics['harmonic_angular']):
+                X[:,1+2*n] = np.cos(omega*times)
+                X[:,2+2*n] = np.sin(omega*times)
+            #Fit 
+            if field=='temperature':
+                regressor.fit(X, kelvin2celsius(data[field]), sample_weight=w)
+            else:
+                regressor.fit(X, data[field], sample_weight=w)
+            #Add to data 
+            harmonics[key].append(np.array(regressor.coef_))       
             
-        diff = equator[field] - pole[field]
-        diff = 0.5*(diff - diff.mean('time'))
-        ang, amp, phase = harmonic_fit(diff)
-        means['harmonic_'+field] = (ang, amp, phase)
-            
+        #Create output
+        harmonics[key] = np.array(harmonics[key]).T
+        
+    return harmonics
 
-    means['mixing_depth'] = np.empty((2,))
-    for box, data in enumerate([pole,equator]):  
-        means['mixing_depth'][box] = float(data['depth']) 
-
-    means['temperature'] = kelvin2celsius(means['temperature'])
-    
-    return means
-
-def harmonic_fit(data, period=np.timedelta64(int(YEAR),'s')):
-    #Time relative to first time. 
-    times = np.array(data['time'] - data['time'][0]) / period
-    
-    #Values
-    data = np.array(data)
-    X = np.array([np.cos(2*np.pi*times), np.sin(2*np.pi*times)]).T
-    X = np.linalg.pinv(X)
-    
-    #Fit
-    coef = X @ data
-    amplitude = np.hypot(coef[1],coef[0])
-    phase = np.arctan2(coef[1],coef[0])
-    angular = 2 * np.pi / float( period / np.timedelta64(1,'s') )
-    
-    return angular, amplitude, phase
-    
-    
-    
+#%% Run commands
 
 
 # Directory containing files downloaded from Hadley server.
-DIR = "/home/ivo/Downloads/EN.4.2.2.analyses.g10.2019"
+DIR = "/home/ivo/dpr_data/stommel/"
 # Read in data from files.
-obs = HadleyObs(DIR)
+obs = HadleyObs(DIR, chunck_size='512MB')
 output = obs.read()
 # Start clustering.
 clusterer = StommelClusterer(output)
@@ -787,7 +785,6 @@ yy, mu, R = create_yy(output, hv_indices)
 
 # Calculate surface forcing
 surface_data = create_surface(output, hv_indices)
-
 
 #Save all relevant data into file. 
 # Save into file
