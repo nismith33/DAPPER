@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 
 #Directory to store figures. 
 fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
-hadley_file = "/home/ivo/Downloads/EN.4.2.2.analyses.g10.2019/boxed_hadley.pkl"
+hadley_file = "/home/ivo/dpr_data/stommel/boxed_hadley.pkl"
 if not os.path.exists(hadley_file):
     raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
     
@@ -28,6 +28,16 @@ with open(hadley_file, 'rb') as stream:
 mm2m = 1e-3 #convert millimeter to meter
 year = 86400 * 365.25 #convert year to seconds
 func_type = type(lambda:0.0)
+
+def harmonic2cos(Acos, Asin):
+    """ Convert fit in form
+        Acos cos(omega*t) + Asin sin(omega*t)
+    into 
+        A cos(omega*t - phase)
+    """
+    A = np.hypot(Asin, Acos)
+    phase = np.arctan2(Asin, Acos)
+    return A, phase
 
 def Bhat(A,B):
     """
@@ -455,7 +465,8 @@ class StommelModel:
         
         #DAPPER Observation operator
         Obs = {'M':M, 'model': obs_model, 'linear': sample2linear(obs_model),
-               'noise': modelling.GaussRV(C=hadley['R'], mu=np.zeros_like(hadley['R']))}
+               'noise': modelling.GaussRV(C=hadley['R'], 
+                                          mu=np.zeros_like(hadley['R']))}
         
         return Obs
     
@@ -655,16 +666,26 @@ def default_air_ep(N, ep=np.array([0.,0.])):
 
 def hadley_air_temp(N):
     """ Perturbed air temperature. """
-    omega, A, phi = hadley['harmonic_temperature']
     def func(t):
-        return hadley['temperature'] + np.array([-1,1])*A*np.cos(omega * t - phi)
+        values  = hadley['surface_temperature_harmonic'][0] + 0. #0. to copy array!
+        for omega, coef  in zip(hadley['harmonic_angular'], hadley['surface_temperature_harmonic'][1::2]):
+            values += coef * np.cos(omega * t)
+        for omega, coef  in zip(hadley['harmonic_angular'], hadley['surface_temperature_harmonic'][2::2]):
+            values += coef * np.sin(omega * t)   
+        return values
+    
     return np.array([func for _ in range(N+1)], dtype=func_type)
 
 def hadley_air_salt(N):
     """ Perturbed air salinity. """
-    omega, A, phi = hadley['harmonic_salinity']
     def func(t):
-        return hadley['salinity'] + np.array([-1,1])*A*np.cos(omega * t - phi)
+        values  = hadley['surface_salinity_harmonic'][0] + 0. #0. to copy array
+        for omega, coef  in zip(hadley['harmonic_angular'], hadley['surface_salinity_harmonic'][1::2]):
+            values += coef * np.cos(omega * t)
+        for omega, coef  in zip(hadley['harmonic_angular'], hadley['surface_salinity_harmonic'][2::2]):
+            values += coef * np.sin(omega * t)   
+        return values
+    
     return np.array([func for _ in range(N+1)], dtype=func_type)
 
 def merge_functions(T, func1, func2):
@@ -821,13 +842,15 @@ def plot_truth_with_phase(ax,model,xx,yy):
     
     if len(yy)>0:
         timeos = times[1:len(yy)+1]
+        std_temp = np.sqrt(np.sum(hadley['R'][:2]))
+        std_salt = np.sqrt(np.sum(hadley['R'][2:]))
         
         for to,y in zip(timeos,yy):
-            ax[0].errorbar(to,np.diff(y[0:2]),.5,color='k')
-            ax[1].errorbar(to,np.diff(y[2:4]),.05,color='k')
+            ax[0].errorbar(to,np.diff(y[0:2]),std_temp,color='orange')
+            ax[1].errorbar(to,np.diff(y[2:4]),std_salt,color='orange')
             #add dots at actual measurement
-            ax[0].plot(to, y[1]-y[0], 'o', markersize=.8, color='orange')
-            ax[1].plot(to, y[3]-y[2], 'o', markersize=.8, color='orange')
+            ax[0].plot(to,np.diff(y[:2]), 'o', markersize=2, color='orange')
+            ax[1].plot(to,np.diff(y[2:]), 'o', markersize=2, color='orange')
 
 #plots all equilibrium solutions at every timestep.
 def plot_all_eq(ax, tseq, model, xx, p=None):

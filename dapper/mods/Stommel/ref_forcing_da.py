@@ -13,8 +13,6 @@ import os
 import pickle as pkl
 from dapper.mods.Stommel import hadley
 
-
-
 def exp_ref_forcing_da(N=100, seed=1000):
     # Timestepping. Timesteps of 1 day, running for 200 year.
     Tda = 20 * stommel.year #time period over which DA takes place. 
@@ -55,7 +53,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
     # Create model.
     HMM = modelling.HiddenMarkovModel(Dyn, Obs, tseq, X0)
     # Create DA
-    xp = EnKF('Sqrt',N)
+    xp = EnKF('Sqrt',N,infl=1.02)
     
     return xp, HMM, model 
 
