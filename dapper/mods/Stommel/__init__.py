@@ -13,8 +13,8 @@ import pickle as pkl
 from abc import ABC, abstractmethod
 
 #Directory to store figures. 
-fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
-hadley_file = "/home/ivo/dpr_data/stommel/boxed_hadley.pkl"
+fig_dir = "/home/oceancirculation059/dpr_data"
+hadley_file = "/home/oceancirculation059/dpr_data/stommel/boxed_hadley.pkl"
 if not os.path.exists(hadley_file):
     raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
     
