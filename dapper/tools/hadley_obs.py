@@ -747,7 +747,7 @@ def create_surface(data, indices, period=np.timedelta64(int(YEAR),'s')):
 
 
 # Directory containing files downloaded from Hadley server.
-DIR = "/home/ivo/dpr_data/stommel/"
+DIR = "/home/oceancirculation059/dpr_data/stommel"
 # Read in data from files.
 obs = HadleyObs(DIR, chunck_size='512MB')
 output = obs.read()
