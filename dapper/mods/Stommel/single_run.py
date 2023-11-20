@@ -14,7 +14,7 @@ import os
 N = 0
 # Timestepping. Timesteps of 1 day, running for 400 year.
 tseq = modelling.Chronology(stommel.year/12, kko=np.array([],dtype=int), 
-                            T=10*stommel.year, BurnIn=0)  # 1 observation/year
+                            T=200*stommel.year, BurnIn=0)  # 1 observation/year
 # Create default Stommel model
 model = stommel.StommelModel()
 # Adjust default initial conditions.
