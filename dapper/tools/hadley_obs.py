@@ -7,6 +7,8 @@ This script processes  objective analyses - Gouretski and Reseghetti (2010)
 taken from
 https://hadleyserver.metoffice.gov.uk/en4/download-en4-2-2.html
 
+Running this script with several years of EN4 data can take hours. 
+
 @author: ivo
 
 """
@@ -22,10 +24,14 @@ import shapely
 import matplotlib as mpl
 import pickle as pkl
 
+# Directory containing files downloaded from Hadley server.
+DIR = "/media/ivo/backup/hadley_et4"
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
 #SECONDS IN YEAR
 YEAR = 365.25 * 86400 #s
+#Size used to read in Hadley data. 
+CHUNCK_SIZE = '1GB'
 
 def kelvin2celsius(temp):
     """
@@ -745,11 +751,10 @@ def create_surface(data, indices, period=np.timedelta64(int(YEAR),'s')):
 
 #%% Run commands
 
-
-# Directory containing files downloaded from Hadley server.
-DIR = "/home/ivo/dpr_data/stommel/"
+#Start time
+print('Starting data processing at ',datetime.now())
 # Read in data from files.
-obs = HadleyObs(DIR, chunck_size='512MB')
+obs = HadleyObs(DIR, chunck_size=CHUNCK_SIZE)
 output = obs.read()
 # Start clustering.
 clusterer = StommelClusterer(output)
@@ -767,10 +772,15 @@ fig = plt.figure(figsize=(11, 8))
 axes = fig.subplots(2, 2)
 avg_outputs = []
 for n, indices in enumerate(hv_indices):
-    avg_outputs.append(average_cluster(output, indices))
-
+    #Label for plot 
     label = 'depth={:.0f}, lat={:.1f}'.format(float(avg_outputs[-1]['depth']),
                                               float(avg_outputs[-1]['lat']))
+    
+    #Carry out the averaging. 
+    print('Processing cluster '+label+' at time '+str(datetime.now()) )
+    avg_outputs.append(average_cluster(output, indices))
+
+    #Plot results averaging. 
     for field, ax in zip(['temperature', 'salinity', 'temperature_uncertainty', 'salinity_uncertainty'],
                          axes.ravel()):
         avg_outputs[-1][field].plot.line(x='time', ax=ax, label=label)
@@ -781,13 +791,16 @@ for ax in axes.ravel():
     ax.grid()
 
 # Create observations that can be assimilated.
+print("Generating observations at time "+str(datetime.now()))
 yy, mu, R = create_yy(output, hv_indices)
 
 # Calculate surface forcing
+print("Generating surface forcing at time "+str(datetime.now()))
 surface_data = create_surface(output, hv_indices)
 
 #Save all relevant data into file. 
-# Save into file
+#Save into file
+print("Saving output to file at time "+str(datetime.now()))
 boxed_hadley = {'yy': yy, 'R': R, 'mu': mu, **surface_data}
 labels = label_indices(output, hv_indices)
 geo = {'cross':0.,'area':0.,'vol':0.}
@@ -817,6 +830,11 @@ for label, index in zip(labels, hv_indices):
 with open(os.path.join(DIR, 'boxed_hadley.pkl'), 'wb') as stream:
     pkl.dump(boxed_hadley, stream)
 
+#Start time
+print('Completed data processing at ',datetime.now())
+
+#%% Plot figures with output. 
+
 # Plot clusters.
 fig = plt.figure(figsize=(11, 8))
 axes = fig.subplots(1, 2, subplot_kw={'projection': '3d'})
@@ -824,3 +842,4 @@ axes = fig.subplots(1, 2, subplot_kw={'projection': '3d'})
 axes[0] = plot_cluster2d(axes[0], output, h_indices)
 # Plot cluster for each point in horizontal and vertical.
 axes[1] = plot_cluster3d(axes[1], output, hv_indices)
+

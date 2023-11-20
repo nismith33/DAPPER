@@ -14,7 +14,8 @@ from abc import ABC, abstractmethod
 
 #Directory to store figures. 
 fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
-hadley_file = "/home/ivo/dpr_data/stommel/boxed_hadley.pkl"
+DIR = "/media/ivo/backup/hadley_et4"
+hadley_file = os.path.join(DIR,"boxed_hadley.pkl")
 if not os.path.exists(hadley_file):
     raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
     
