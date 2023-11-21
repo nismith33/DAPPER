@@ -22,13 +22,23 @@ if not os.path.exists(hadley_file):
 #Import values based on Hadley EN4 observations. 
 with open(hadley_file, 'rb') as stream:
     hadley = pkl.load(stream)
-    ref = np.mean(hadley['yy'], axis=0)
+    ref = hadley['yy'][0] #np.mean(hadley['yy'], axis=0)
     cross_area = 0.5*(hadley['geo_pole']['dx'] * hadley['geo_pole']['dz'] +
                       hadley['geo_eq']['dx'] * hadley['geo_eq']['dz'])
 
-mm2m = 1e-3 #convert millimeter to meter
+mm2m = 1 #1e-3 #convert millimeter to meter
 year = 86400 * 365.25 #convert year to seconds
 func_type = type(lambda:0.0)
+
+def ens_modus(E):
+    #Modus of normal variables is equal to mean. 
+    m = np.mean(E, axis=1)
+    #Modus of lognormal variables is exp(mu-Sigma 1)
+    for n,e in enumerate(E[:,:,4:]):
+        sigma = np.cov(e.T)
+        m[n,4:] -= np.sum(sigma, axis=1)
+    return m
+        
 
 def harmonic2cos(Acos, Asin):
     """ Convert fit in form
@@ -185,7 +195,7 @@ rho_eq = eos(ref[1], ref[3])
 gamma_ref = Q_overturning * eos.rho_ref / (rho_pole - rho_eq) / cross_area
 #Default diffusion 
 eta = np.array([np.nan,np.nan,.3])
-temp_diff = 1.e-5  
+temp_diff = 1.e-5  / 100.
 salt_diff = eta[2] * temp_diff
 #Ice volume greenland ice sheet 
 V_ice = 1710000 * 2 * 1e9 #m3
@@ -200,9 +210,9 @@ class State:
     #salinity in ocean basis
     salt: np.ndarray = np.array([ref[2:4]]) #ppt 35,36.5
     #surface heat flux coefficient
-    temp_diff: np.ndarray = temp_diff / mm2m
+    temp_diff: np.ndarray = np.log(temp_diff / mm2m)
     #surface salinity flux coefficient
-    salt_diff: np.ndarray = salt_diff / mm2m
+    salt_diff: np.ndarray = np.log(salt_diff / mm2m)
     #advective transport flux ceofficient 
     gamma: float = 0.0
     #time associated with state
@@ -304,7 +314,7 @@ class AdvectiveFlux(Flux):
         #Density 
         rho = self.eos(state.temp, state.salt)
         #Transport volume
-        return np.abs(state.gamma * np.diff(rho, axis=1) / self.eos.rho_ref)
+        return np.abs(np.exp(state.gamma) * np.diff(rho, axis=1) / self.eos.rho_ref)
     
     def left(self, state):
         flux = State().zero()
@@ -356,7 +366,7 @@ class TempAirFlux(Flux):
     def top(self, state):
         n = np.mod(self.ens_member, len(self.functions))
         flux = State().zero()
-        flux.temp[0] -= state.temp_diff * (self.functions[n](state.time) - state.temp[0]) * mm2m
+        flux.temp[0] -= np.exp(state.temp_diff) * (self.functions[n](state.time) - state.temp[0]) * mm2m
         return flux
         
 class SaltAirFlux(Flux):
@@ -369,7 +379,7 @@ class SaltAirFlux(Flux):
     def top(self, state):
         n = np.mod(self.ens_member, len(self.functions))
         flux = State().zero()
-        flux.salt[0] -= state.salt_diff * (self.functions[n](state.time) - state.salt[0]) * mm2m
+        flux.salt[0] -= np.exp(state.salt_diff) * (self.functions[n](state.time) - state.salt[0]) * mm2m
         return flux
         
 class EPFlux(Flux):
@@ -431,13 +441,17 @@ class StommelModel:
         """Reverse engineer advective flux coefficient gamma using temperature/salinity fields in state
         and meriodional overturning discharge Q."""
         
-        rho  =  self.eos(state.temp, state.salt)
-        drho =  np.diff(np.sum(self.V * rho, axis=0)/np.sum(self.V, axis=0))[0]
+        #Density difference
+        rho  = self.eos(state.temp, state.salt)
+        drho = rho[0,0]-rho[0,1]
         rho0 = self.eos.rho_ref
         
-        area = np.sum(np.mean(self.dx, axis=1) * np.mean(self.dz, axis=1))
+        #Area cross-section boxes.
+        A = np.mean(self.dx * self.dz)
         
-        return -Q * (rho0 / drho) / area 
+        #Estimated Gamma. Q = A * gamma * drho/rho0
+        gamma = Q / (A * drho/rho0) 
+        return np.log(gamma)
     
     def default_fluxes(self):
         """Set default fluxes."""
@@ -585,31 +599,31 @@ class StommelModel:
             
     def eta3(self, state):
         """Non-dimensional parameter eta3. See Dijkstra (2008)."""
-        R_T = np.mean(state.temp_diff / self.dz[0]) * mm2m
-        R_S = np.mean(state.salt_diff / self.dz[0]) * mm2m
+        R_T = np.mean(np.exp(state.temp_diff) / self.dz[0]) * mm2m
+        R_S = np.mean(np.exp(state.salt_diff) / self.dz[0]) * mm2m
         return R_S/ R_T
     
     def temp_scale(self, state):
         """Factor to transform nondimensional to dimensional temperature."""
         A = np.mean(self.dx[0]) * np.mean(self.dz[0])
-        gamma = state.gamma * A
+        gamma = np.exp(state.gamma) * A
         return self.trans_scale(state) / (gamma * self.eos.alpha_T)
     
     def salt_scale(self, state):
         """Factor to transform nondimensional to dimensional salinity."""
         A = np.mean(self.dx[0]) * np.mean(self.dz[0])
-        gamma = state.gamma * A
+        gamma = np.exp(state.gamma) * A
         return self.trans_scale(state) / (gamma * self.eos.alpha_S)  
         
     def trans_scale(self, state):
         """Factor to transform nondimensional to dimensional advective transport."""
-        R_T = np.mean(state.temp_diff * mm2m / self.dz[0])
+        R_T = np.mean(np.exp(state.temp_diff) * mm2m / self.dz[0])
         V = np.prod(self.V[0]) / np.sum(self.V[0])
         return R_T * V
     
     def time_scale(self, state):
         """ Factor to transform nondimensional time to dimensional time. """
-        return 1 / np.mean(state.temp_diff * mm2m / self.dz[0])
+        return 1 / np.mean(np.exp(state.temp_diff) * mm2m / self.dz[0])
 
     @property        
     def x0(self):
@@ -628,7 +642,7 @@ class StommelModel:
         salt_eq  = self.eta2(state) / (self.eta3(state) + np.abs(trans_eq))    
         return salt_eq * self.salt_scale(state)
     
-    def trans_eq(self, state):
+    def trans_eq_old(self, state):
         """Meriodional transport pole->equator in equilibrium in m3."""  
         from scipy.optimize import root_scalar as find_roots
         import matplotlib.pyplot as plt
@@ -650,6 +664,30 @@ class StommelModel:
             
             #Expand search area
             q *= 2
+        
+        return np.array(roots) * self.trans_scale(state) 
+    
+    def trans_eq(self, state):
+        """Meriodional transport pole->equator in equilibrium in m3."""  
+        
+        #Terms in polynomial.
+        f1 = np.polynomial.Polynomial((1,1))
+        f2 = np.polynomial.Polynomial((self.eta3(state),1))
+        f0 = np.polynomial.Polynomial((0,1))
+        
+        #Roots positive flow 
+        fp = f0*f1*f2 - self.eta1(state) * f2 + self.eta2(state) * f1
+        roots = [np.real(r) for r in fp.roots() if (np.isclose(np.imag(r),0,atol=1e-5) and np.real(r)>=0.)]
+        
+        #Roots negative flow 
+        fn = -f0*f1*f2 - self.eta1(state) * f2 + self.eta2(state) * f1
+        roots = roots + [-np.real(r) for r in fn.roots() if (np.isclose(np.imag(r),0,atol=1e-5) and np.real(r)>=0.)]
+        
+        #Check 
+        if len(roots)!=0 and len(roots)!=3:
+            print('Roots ',print(roots))
+            msg = "Number of equilibria should be 1 or 3."
+            raise RuntimeError(msg)
         
         return np.array(roots) * self.trans_scale(state) 
     
@@ -782,6 +820,7 @@ def time_figure(tseq):
     ax[1].set_ylabel('Salinity diff. [ppt]')
     return fig, ax
 
+
 #modify time_figure, adding a third plot containing T-vs-S phase portrait
 def time_figure_with_phase(tseq):
     plt.close('all')
@@ -804,6 +843,35 @@ def time_figure_with_phase(tseq):
     ax[2].set_xlabel('Dimensionless Salinity')
     return fig, ax
 
+def plot_relative_spread(axes, tseq, E, yy):
+    names = ['temp_pole','temp_eq','salt_pole','salt_eq',
+             'temp_diff', 'salt_diff','adv']
+    E = E.T
+    yy = yy.T
+
+    ctimes = set(tseq.times).intersection(tseq.otimes)
+    mask  = [t1 in ctimes for t1 in tseq.times ]
+    masko = [t1 in ctimes for t1 in tseq.otimes]
+    
+    nyy = np.size(yy,0)
+    for name, field, obs in zip(names[:nyy], E[:nyy], yy):
+        std = np.std(field, axis=0, ddof=1)
+        mu  = np.mean(field, axis=0)
+        h = axes[0].plot(tseq.times/year, std/std[0], label=name)
+        
+        if any(mask):
+            axes[0].plot(tseq.times[mask]/year, np.abs(obs[masko]-mu[mask])/std[0], 
+                         'x', color=h[0].get_color(), markersize=2)    
+            
+    for name, field in zip(names[nyy:], E[nyy:]):
+        std = np.std(field, axis=0, ddof=1)
+        h = axes[1].plot(tseq.times/year, std/std[0], label=name)
+        
+    for ax in axes:
+        ax.legend(loc='upper left', ncol=2)
+        ax.set_ylabel('Relative spread')
+        ax.grid(which='major', color=(.7,.7,.7), linestyle='-')
+        
 #Plot T vs t, S vs t, and T vs S phase portrait. The T and S in the phase portrait
 #are rescaled to a dimensionless form.
 def plot_truth_with_phase(ax,model,xx,yy):
