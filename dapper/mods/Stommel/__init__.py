@@ -11,6 +11,7 @@ import dataclasses
 import os
 import pickle as pkl
 from abc import ABC, abstractmethod
+from copy import copy
 
 #Directory to store figures. 
 fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
@@ -435,6 +436,9 @@ class StommelModel:
         """Part of object initialization to be carried out after __init__ provided by dataclass."""
         self.init_state.gamma = self.default_gamma(self.init_state)
         self.state.gamma = self.default_gamma(self.state)
+        
+        self.init_state = self.default_parameters(self.init_state, Q_overturning)
+        self.state = copy(self.init_state)
         self.fluxes = self.default_fluxes()
         
     def default_gamma(self, state, Q=Q_overturning):
@@ -453,6 +457,36 @@ class StommelModel:
         gamma = Q / (A * drho/rho0) 
         return np.log(gamma)
     
+    def default_parameters(self, state, Q=Q_overturning):
+        """ Find parameter values such that current state is an equilibrium
+        with transport Q. """
+        from scipy.optimize import minimize
+        
+        state.gamma = self.default_gamma(state, Q)
+        T = np.diff(state.temp).flatten()
+        S = np.diff(state.salt).flatten()
+        
+        def equi(params):
+            state.temp_diff=params[0]; state.salt_diff=params[1]
+            
+            trans_eq = self.trans_eq(state)
+            temp_eq  = self.temp_eq(state, trans_eq)
+            salt_eq  = self.salt_eq(state, trans_eq)
+            m        = np.argmax(trans_eq)
+            
+            cost  = 0.5*(T - temp_eq[m])**2 / T**2
+            cost += 0.5*(S - salt_eq[m])**2 / S**2
+            
+            return cost
+        
+        #Initial guess
+        params0 = np.log(np.array([1e-5,1e-6]))
+        minimizer = minimize(equi, params0)
+        
+        state.temp_diff, state.salt_diff = minimizer.x[0], minimizer.x[1]
+        
+        return state
+
     def default_fluxes(self):
         """Set default fluxes."""
         return [AdvectiveFlux(self.eos)]
@@ -684,7 +718,7 @@ class StommelModel:
         roots = roots + [-np.real(r) for r in fn.roots() if (np.isclose(np.imag(r),0,atol=1e-5) and np.real(r)>=0.)]
         
         #Check 
-        if len(roots)!=0 and len(roots)!=3:
+        if not (len(roots)!=0 or len(roots)!=3):
             print('Roots ',print(roots))
             msg = "Number of equilibria should be 1 or 3."
             raise RuntimeError(msg)
@@ -874,8 +908,8 @@ def plot_relative_spread(axes, tseq, E, yy):
         
 #Plot T vs t, S vs t, and T vs S phase portrait. The T and S in the phase portrait
 #are rescaled to a dimensionless form.
-def plot_truth_with_phase(ax,model,xx,yy):
-    times = np.linspace(ax[0].get_xlim()[0], ax[0].get_xlim()[1], np.size(xx,0)) 
+def plot_truth_with_phase(ax,HMM,model,xx,yy):
+    times = HMM.tseq.times / year
     
     states=array2states(xx,times)
     TH = np.array([s.regime=='TH' for s in states], dtype=bool)
@@ -910,7 +944,7 @@ def plot_truth_with_phase(ax,model,xx,yy):
     
     
     if len(yy)>0:
-        timeos = times[1:len(yy)+1]
+        timeos = HMM.tseq.otimes / year
         std_temp = np.sqrt(np.sum(hadley['R'][:2]))
         std_salt = np.sqrt(np.sum(hadley['R'][2:]))
         
