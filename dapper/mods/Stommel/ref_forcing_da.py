@@ -14,11 +14,11 @@ import pickle as pkl
 from dapper.mods.Stommel import hadley
 import shutil
 
-fig_dir = '/home/ivo/Figures/stommel/base'
+fig_dir = stommel.fig_dir
 shutil.copy(__file__, fig_dir) 
 
-
 def exp_ref_forcing_da(N=100, seed=1000):
+    np.random.seed(seed)
     # Timestepping. Timesteps of 1 day, running for 200 year.
     kko = np.arange(1, len(hadley['yy'][1:]))
     tseq = modelling.Chronology(stommel.year/12, kko=kko,
@@ -47,11 +47,14 @@ def exp_ref_forcing_da(N=100, seed=1000):
     B.salt += hadley['R'][2:]  # ppt2
     B.temp_diff += np.log(1.3)**2  # (0.0*model.init_state.temp_diff)**2
     B.salt_diff += np.log(1.3)**2  # (0.0*model.init_state.salt_diff)**2
-    B.gamma += np.log(1.3)**2  # (0.0*model.init_state.gamma)**2
+    B.gamma += np.log(1.3)**2  # (0.0*model.init_state.gamma)**
+
     # Transform modus value in x0 to mean value.
     x0[4] += B.temp_diff
     x0[5] += B.salt_diff
     x0[6] += B.gamma
+
+    #Create sampler for initial conditions. 
     X0 = modelling.GaussRV(C=B.to_vector(), mu=x0)
     # Dynamisch model. All model error is assumed to be in forcing.
     Dyn = {'M': model.M,
@@ -65,7 +68,6 @@ def exp_ref_forcing_da(N=100, seed=1000):
     # Create DA
     xp = EnKF('Sqrt', N, infl=1.0)
     return xp, HMM, model
-
 
 if __name__ == '__main__':
     xp, HMM, model = exp_ref_forcing_da()
@@ -104,6 +106,7 @@ if __name__ == '__main__':
     plt.legend()
     fig.savefig(os.path.join(fig_dir,'etas.png'),format='png',dpi=300)
 
+    #Plot transport
     fig = plt.figure()
     ax = fig.subplots(1, 1)
     ax.plot(HMM.tseq.times/stommel.year, trans/1e6)
@@ -113,3 +116,13 @@ if __name__ == '__main__':
     ax.set_xlabel('Time [year]')
     ax.set_ylabel('Transport [Sv]')
     fig.savefig(os.path.join(fig_dir,'transport.png'),format='png',dpi=300)
+    
+    #Save 1st and last analysis
+    with open(os.path.join(fig_dir,'ana_stats.pkl'),'wb') as stream:
+        stats = {'mean0':np.mean(Eana[0],axis=0),
+                 'mean1':np.mean(Eana[-1],axis=0),
+                 'var0':np.var(Eana[0],axis=0,ddof=1),
+                 'var1':np.var(Eana[-1],axis=0,ddof=1),
+                 'times':[HMM.tseq.otimes[0],HMM.tseq.otimes[-1]],
+                 }
+        pkl.dump(stats,stream)
