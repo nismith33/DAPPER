@@ -13,10 +13,11 @@ import pickle as pkl
 from abc import ABC, abstractmethod
 from copy import copy
 
+
 #Directory to store figures. 
-fig_dir = "/home/ggorblin/DAPPER/dapper/mods/Stommel/dpr_data/"
-DIR = "/media/ivo/backup/hadley_et4"
-hadley_file = os.path.join(DIR,"boxed_hadley.pkl")
+fig_dir = "<dir for storing figures>"
+DIR = "<dir with .pkl file containing processed observations>"
+hadley_file = os.path.join(DIR,"boxed_hadley_inverted.pkl")
 if not os.path.exists(hadley_file):
     raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
     
@@ -491,7 +492,7 @@ class StommelModel:
         """Set default fluxes."""
         return [AdvectiveFlux(self.eos)]
     
-    def obs_hadley(self):
+    def obs_hadley(self, factor=1):
         #Size of observations.
         M = 2*np.size(self.dz, 1)
         
@@ -514,7 +515,7 @@ class StommelModel:
         
         #DAPPER Observation operator
         Obs = {'M':M, 'model': obs_model, 'linear': sample2linear(obs_model),
-               'noise': modelling.GaussRV(C=hadley['R'], 
+               'noise': modelling.GaussRV(C=hadley['R']*factor, 
                                           mu=np.zeros_like(hadley['R']))}
         
         return Obs
@@ -945,15 +946,17 @@ def plot_truth_with_phase(ax,HMM,model,xx,yy):
     
     if len(yy)>0:
         timeos = HMM.tseq.otimes / year
-        std_temp = np.sqrt(np.sum(hadley['R'][:2]))
-        std_salt = np.sqrt(np.sum(hadley['R'][2:]))
+        std_temp = np.sqrt(np.sum(HMM.Obs.noise.C.diag[:2]))
+        std_salt = np.sqrt(np.sum(HMM.Obs.noise.C.diag[2:]))
         
         for to,y in zip(timeos,yy):
-            ax[0].errorbar(to,np.diff(y[0:2]),std_temp,color='orange')
-            ax[1].errorbar(to,np.diff(y[2:4]),std_salt,color='orange')
+            ax[0].errorbar(to,np.diff(y[0:2]),std_temp,color='yellow',
+                           alpha=.15)
+            ax[1].errorbar(to,np.diff(y[2:4]),std_salt,color='yellow',
+                           alpha=.15)
             #add dots at actual measurement
-            ax[0].plot(to,np.diff(y[:2]), 'o', markersize=2, color='orange')
-            ax[1].plot(to,np.diff(y[2:]), 'o', markersize=2, color='orange')
+            ax[0].plot(to,np.diff(y[:2]), 'o', markersize=3, color='orange',)
+            ax[1].plot(to,np.diff(y[2:]), 'o', markersize=3, color='orange')
 
 #plots all equilibrium solutions at every timestep.
 def plot_all_eq(ax, tseq, model, xx, p=None):
