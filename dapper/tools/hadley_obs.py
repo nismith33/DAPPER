@@ -25,13 +25,14 @@ import matplotlib as mpl
 import pickle as pkl
 
 # Directory containing files downloaded from Hadley server.
-DIR = "/media/ivo/backup/hadley_et4"
+DIR = "<topdir containing files downloaded from server or containing dirs with those files>"
+#DIR = "/home/ivo/dpr_data/stommel"
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
 #SECONDS IN YEAR
 YEAR = 365.25 * 86400 #s
 #Size used to read in Hadley data. 
-CHUNCK_SIZE = '1GB'
+CHUNCK_SIZE = "1GB"
 
 def kelvin2celsius(temp):
     """
@@ -186,7 +187,12 @@ class HadleyObs:
         
         data = data.assign(area=(['lat', 'lon'], np.abs(areas)))
         data = data.assign(dx=(['lat','lon'], np.abs(dx)))
-        data = data.assign(dy=(['lat','lon'], np.abs(dy)))        
+        data = data.assign(dy=(['lat','lon'], np.abs(dy))) 
+        
+        mask = data['temperature'][0,0,:,:].isnull() 
+        for name in ['area','dx','dy']:
+            data[name] = xr.where(mask | data[name].isnull(), 0, data[name])
+        
         data = data.assign(width=(['lat'], np.nansum(np.abs(dy),axis=1)))
         data = data.assign(height=(['lon'], np.nansum(np.abs(dx),axis=0)))
 
@@ -207,8 +213,12 @@ class HadleyObs:
         #Expand to top 
         dz[0,:,:] = dz[1,:,:]
         
-
-        return data.assign(volume=(['depth', 'lat', 'lon'], np.abs(dz)))
+        data = data.assign(volume=(['depth', 'lat', 'lon'], np.abs(dz)))
+        mask = data['temperature'][0,:,:,:].isnull() 
+        for name in ['volume']:
+            data[name] = xr.where(mask | data[name].isnull(), 0, data[name])
+        
+        return data
 
 
 class StommelClusterer:
@@ -229,21 +239,10 @@ class StommelClusterer:
 
     def select_atlantic(self):
         """ Select grid points in North-Atlantic. """
-
-        # Polygon around the north-atlantic (lat, lon)
-        points = [(35.955065, -5.606114), (0., 0.095069),
-                  (0., -60.626643), (10.671971, -60.718661),
-                  (17.958394, -60.683383), (27.043391, -79.990489),
-                  (34.899044, -87.998876), (60., -64.),
-                  (70.165621, -45.0),
-                  (70., 23.5), (54.168530, -9.246100)]
         
-        points = [(35.955065, -5.606114), (23.5, 0.095069),
-                  (23.5, -60.626643), (23.5, -60.718661),
-                  (23.5, -60.683383), (27.043391, -79.990489),
-                  (34.899044, -87.998876), (60., -64.),
-                  (70.165621, -45.0),
-                  (70., 23.5), (54.168530, -9.246100)]
+        #Rough outline of North-Atlantic
+        points = [(23.5,-80.),(80,-80), (80,20), (70,20),
+                  (58.5,-7.35), (35.,-8.), (23.5, -8.)]
         
         poly = shapely.Polygon(points)
 
@@ -288,6 +287,39 @@ class StommelClusterer:
         mlat = 0.5*np.cos(np.deg2rad(x[1])) + 0.5*np.cos(np.deg2rad(y[1]))
         # Return distance.
         return dlat**2 + dlon**2 * mlat**2
+    
+    def cluster_by_inversion(self, indices, min_depth=2e3):
+        """ Divide profiles based on temperature inversion surface. """
+        from sklearn.pipeline import Pipeline
+        from sklearn.impute import KNNImputer, SimpleImputer
+        from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
+        from sklearn.cluster import KMeans, MiniBatchKMeans, AgglomerativeClustering
+
+        
+        # Variables
+        temp = np.array(self.data['temperature'].mean('time'))
+        lat = np.array(self.data['lat'])
+        lon = np.array(self.data['lon180'])
+        
+        # Select only those profiles deeper 2km.
+        km2 = int(np.sum(self.data['depth'] <= min_depth))
+        mask = np.sum(~np.isnan(temp), axis=0) >= km2
+        indices = [(iy1, ix1) for (iy1, ix1) in indices if mask[iy1, ix1]]
+        
+        #Find inversion depths
+        T = (self.data['temperature']*self.data['volume']).sum('depth') / self.data['volume'].sum('depth')
+        dT = (self.data['temperature'][:,0,:,:] - T)
+        mask = (dT<0).mean('time') >= 1./12.
+        
+        #Use mask to select indices.
+        mask = np.array(mask)
+        inverted = [(iy1, ix1) for (iy1, ix1) in indices if mask[iy1,ix1]]
+        non_inverted = [(iy1, ix1) for (iy1, ix1) in indices if not mask[iy1, ix1]]
+        
+        print('InV ',len(inverted),len(non_inverted))
+        
+        return [inverted, non_inverted]
+        
 
     def cluster_horizontal(self, indices, min_depth=2e3):
         """ Divide profiles into pole/equator classes. 
@@ -589,32 +621,29 @@ def average_cluster(data, indices):
 
     return xr.Dataset(output)
 
-def cross_section(data, indices, label):
-    """
-    Calculate the cross-section between the boxes. 
-    """
-    indices = np.array(indices)
-    indices3d = indices.T
+def cross_section3d(data, indices1, indices2):
+    """ Calculate cross-section boundary between boxed. """
     
-    if label == 'pole':
-        interface_index = np.min 
-    elif label == 'equator':
-        interface_index = np.max
+    mask = np.zeros(data['volume'].shape)
+    for iz,iy,ix in indices1:
+        mask[iz,iy,ix] =  1.
+    for iz,iy,ix in indices2:
+        mask[iz,iy,ix] = -1.
+        
+    #Meridional cross section 
+    DY = np.array(data['volume'] / data['dx'])
+    DY = .5*DY[:,:,1:]+.5*DY[:,:,:-1]
+    maskY = mask[:,:,1:]*mask[:,:,:-1]
+    DY = np.where(maskY<0., DY, 0.*DY)
     
-    # Interface 
-    mask = np.zeros_like(indices3d[0])
-    for ilon in np.unique(indices3d[2]):
-        ilat = interface_index(indices3d[1][indices3d[2]==ilon])
-        mask = np.logical_or(mask, np.logical_and(indices3d[1]==ilat,indices3d[2]==ilon))
+    #Zonal cross section 
+    DX = np.array(data['volume'] / data['dy'])
+    DX = .5*DX[:,1:,:]+.5*DX[:,:-1,:]
+    maskX = mask[:,1:,:]*mask[:,:-1,:]
+    DX = np.where(maskX<0., DX, 0.*DX)
     
-    data3d = data.isel(depth=xr.DataArray(indices3d[0][mask], dims='ind3d'),
-                       lat=xr.DataArray(indices3d[1][mask], dims='ind3d'),
-                       lon=xr.DataArray(indices3d[2][mask], dims='ind3d'),
-                       )
-    
-    areaInter = data3d['volume'].sum('ind3d') / data3d['dy'].mean('ind3d')
-    return float(areaInter)
-
+    areaInter = np.nansum(DX)+np.nansum(DY)
+    return areaInter
 
 def label_indices(data, indices):
     """
@@ -760,7 +789,7 @@ output = obs.read()
 clusterer = StommelClusterer(output)
 # Indices of points in North Atlantic and
 # divide in pole and equatorial box.
-h_indices = clusterer.cluster_horizontal(clusterer.select_atlantic())
+h_indices = clusterer.cluster_by_inversion(clusterer.select_atlantic())
 # Divide each horizontal cluster in 2 vertical clusters.
 hv_indices = []
 for indices in h_indices:
@@ -772,19 +801,18 @@ fig = plt.figure(figsize=(11, 8))
 axes = fig.subplots(2, 2)
 avg_outputs = []
 for n, indices in enumerate(hv_indices):
+    #Carry out the averaging. 
+    print('Processing cluster ',n,' of ',len(hv_indices))
+    avg_outputs.append(average_cluster(output, indices))
+    
     #Label for plot 
     label = 'depth={:.0f}, lat={:.1f}'.format(float(avg_outputs[-1]['depth']),
                                               float(avg_outputs[-1]['lat']))
     
-    #Carry out the averaging. 
-    print('Processing cluster '+label+' at time '+str(datetime.now()) )
-    avg_outputs.append(average_cluster(output, indices))
-
     #Plot results averaging. 
-    for field, ax in zip(['temperature', 'salinity', 'temperature_uncertainty', 'salinity_uncertainty'],
-                         axes.ravel()):
+    for field, ax in zip(['temperature', 'salinity', 'temperature_uncertainty', 'salinity_uncertainty'],axes.ravel()):
         avg_outputs[-1][field].plot.line(x='time', ax=ax, label=label)
-
+        
     plt.legend(loc='upper right')
 
 for ax in axes.ravel():
@@ -804,17 +832,22 @@ print("Saving output to file at time "+str(datetime.now()))
 boxed_hadley = {'yy': yy, 'R': R, 'mu': mu, **surface_data}
 labels = label_indices(output, hv_indices)
 geo = {'cross':0.,'area':0.,'vol':0.}
+ocean_indices = []
 for label, index in zip(labels, hv_indices):
     avg = average_cluster(output, index)
     if all(label==['pole','ocean']):
-        geo['cross'] = geo['cross']+0.5*cross_section(output,index,label[0])
         geo['area']  = geo['area']+float(avg['area'])
         geo['vol']   = geo['vol']+float(avg['volume'])
+        index_pole = index + []
     if all(label==['equator','ocean']):
-        geo['cross'] = geo['cross']+0.5*cross_section(output,index,label[0])
         geo['area']  = geo['area']+float(avg['area'])
         geo['vol']   = geo['vol']+float(avg['volume'])
+        index_eq = index + []
+    
+#Set cross-section between boxes. 
+geo['cross'] = cross_section3d(output,index_pole, index_eq)
         
+#Set box sizes
 dz = geo['vol'] / geo['area'] 
 dx = geo['cross'] / dz
 for label, index in zip(labels, hv_indices):
@@ -827,7 +860,7 @@ for label, index in zip(labels, hv_indices):
     if all(label==['equator','ocean']):
         boxed_hadley = {**boxed_hadley, 'geo_eq':geo}
         
-with open(os.path.join(DIR, 'boxed_hadley.pkl'), 'wb') as stream:
+with open(os.path.join(DIR, 'boxed_hadley_inverted.pkl'), 'wb') as stream:
     pkl.dump(boxed_hadley, stream)
 
 #Start time
@@ -835,11 +868,12 @@ print('Completed data processing at ',datetime.now())
 
 #%% Plot figures with output. 
 
-# Plot clusters.
-fig = plt.figure(figsize=(11, 8))
-axes = fig.subplots(1, 2, subplot_kw={'projection': '3d'})
-# Plot cluster for each point in horizontal.
-axes[0] = plot_cluster2d(axes[0], output, h_indices)
-# Plot cluster for each point in horizontal and vertical.
-axes[1] = plot_cluster3d(axes[1], output, hv_indices)
+if True:
+    # Plot clusters.
+    fig = plt.figure(figsize=(11, 8))
+    axes = fig.subplots(1, 2, subplot_kw={'projection': '3d'})
+    # Plot cluster for each point in horizontal.
+    axes[0] = plot_cluster2d(axes[0], output, h_indices)
+    # Plot cluster for each point in horizontal and vertical.
+    axes[1] = plot_cluster3d(axes[1], output, hv_indices)
 
