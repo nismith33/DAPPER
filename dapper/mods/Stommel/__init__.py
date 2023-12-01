@@ -16,8 +16,9 @@ from copy import copy
 
 #Directory to store figures. 
 fig_dir = "<dir for storing figures>"
-DIR = "<dir with .pkl file containing processed observations>"
-hadley_file = os.path.join(DIR,"boxed_hadley_inverted.pkl")
+DIR = "<topdir containing files downloaded from server or containing dirs with those files>"
+FILE_NAME = 'boxed_hadley_inverted0422.pkl'
+hadley_file = os.path.join(DIR, FILE_NAME)
 if not os.path.exists(hadley_file):
     raise FileExistsError("Generate a file with Hadley EN4 output using tools/hadley_obs.")
     
@@ -33,6 +34,9 @@ year = 86400 * 365.25 #convert year to seconds
 func_type = type(lambda:0.0)
 
 def ens_modus(E):
+    """ Calculates modus of the ensemble when log-normal distribution is 
+    assumed for the temp. diffusion, salt diffusion and advection coefficient. """
+    
     #Modus of normal variables is equal to mean. 
     m = np.mean(E, axis=1)
     #Modus of lognormal variables is exp(mu-Sigma 1)
@@ -677,55 +681,33 @@ class StommelModel:
         salt_eq  = self.eta2(state) / (self.eta3(state) + np.abs(trans_eq))    
         return salt_eq * self.salt_scale(state)
     
-    def trans_eq_old(self, state):
-        """Meriodional transport pole->equator in equilibrium in m3."""  
-        from scipy.optimize import root_scalar as find_roots
-        import matplotlib.pyplot as plt
-        
-        #Function of transport that is equal to zero in equilibrium.
-        f = lambda q: (q - self.eta1(state) / (1+np.abs(q)) + 
-                       self.eta2(state) / (self.eta3(state)+np.abs(q)))
-        
-        roots = []
-        q  = np.linspace(-3,3,30000) 
-        while len(roots)==0: 
-            #Evaluate values on grid. 
-            fq = f(q)
-            q=.5*q[1:]+.5*q[:-1]
-            fq=fq[1:]*fq[:-1]
-        
-            #Find roots
-            roots = [q1 for q1,f1 in zip(q,fq) if f1<0.]
-            
-            #Expand search area
-            q *= 2
-        
-        return np.array(roots) * self.trans_scale(state) 
-    
     def trans_eq(self, state):
         """Meriodional transport pole->equator in equilibrium in m3."""  
         
-        #Terms in polynomial.
+        #Roots positive flow 
+        f0 = np.polynomial.Polynomial((0,1))
         f1 = np.polynomial.Polynomial((1,1))
         f2 = np.polynomial.Polynomial((self.eta3(state),1))
-        f0 = np.polynomial.Polynomial((0,1))
-        
-        #Roots positive flow 
+       
         fp = f0*f1*f2 - self.eta1(state) * f2 + self.eta2(state) * f1
-        roots = [np.real(r) for r in fp.roots() if (np.isclose(np.imag(r),0,atol=1e-5) and np.real(r)>=0.)]
-        
+        roots = [np.real(r) for r in np.round(poly3_roots(fp),6) if (np.imag(r)==0 and np.real(r)>=0)]              
+
         #Roots negative flow 
-        fn = -f0*f1*f2 - self.eta1(state) * f2 + self.eta2(state) * f1
-        roots = roots + [-np.real(r) for r in fn.roots() if (np.isclose(np.imag(r),0,atol=1e-5) and np.real(r)>=0.)]
+        f0 = np.polynomial.Polynomial((0,1))
+        f1 = np.polynomial.Polynomial((1,-1))
+        f2 = np.polynomial.Polynomial((self.eta3(state),-1))
+        
+        fn = f0*f1*f2 - self.eta1(state) * f2 + self.eta2(state) * f1
+        roots += [np.real(r) for r in np.round(poly3_roots(fn),6) if (np.imag(r)==0 and np.real(r)<0)]
         
         #Check 
-        if not (len(roots)!=0 or len(roots)!=3):
-            print('Roots ',print(roots))
+        if not (len(roots)==1 or len(roots)==3):
+            print('Roots ',len(roots),poly3_roots(fp), poly3_roots(fn))
             msg = "Number of equilibria should be 1 or 3."
             raise RuntimeError(msg)
         
         return np.array(roots) * self.trans_scale(state) 
-    
+      
 def default_air_temp(N):
     """ Unperturbed air temperature. """
     return np.array([lambda t: hadley['temperature'] for _ in range(N+1)], dtype=func_type)
@@ -791,29 +773,6 @@ def add_functions(func, func_add):
     
     return trend_func
 
-    
-# Display model information
-def display(model):
-    state = model.init_state
-    print('Model information:')
-    print('eta1: {:.2f}'.format(model.eta1(state)))
-    print('eta2: {:.2f}'.format(model.eta2(state)))
-    print('eta3: {:.2f}'.format(model.eta3(state)))
-
-    trans_eq = model.trans_eq(state)
-    temp_eq = model.temp_eq(state, trans_eq)
-    salt_eq = model.salt_eq(state, trans_eq)
-
-    eq_str = '{:16s} {:16s} {:16s}'.format(
-        'transport', 'temperature diff', 'salinity diff')
-    print('\n' + eq_str)
-    eq_str = '{:16s} {:16s} {:16s}'.format('[Sv]', '[C]', '[ppt]')
-    print(eq_str)
-    for trans, temp, salt in zip(trans_eq, temp_eq, salt_eq):
-        print('{:16.4e} {:16.2f} {:16.3f}'.format(trans*1e-6, temp, salt))
-    print()
-
-
 def add_melt(func, model, sig_T=0.0):
     """ Add melt Greenland ice sheet to salinity. """
     V_ice = 1710000 * 2 * 1e9 * np.array([1.0, 0.0]) #m3
@@ -838,6 +797,84 @@ def add_warming(func, mu=np.array([3., 2.]), sigs=np.array([0., 0.])):
     def warmed_func(t):
         return func(t) + min(t, T) * rate 
     return warmed_func   
+
+#%% Functions to deal with polynomials
+
+def poly_divide(nominator, denominator):
+    """ nominator = q * denominator + r using Euclidean division algorithm."""
+    from numpy.polynomial import Polynomial as P
+    d = denominator.copy()
+    d.coef = np.trim_zeros(d.coef, 'b')
+    r = nominator.copy()
+    r.coef = np.trim_zeros(r.coef, 'b')
+    
+    #Order of polynomials
+    dimr, dimd = len(r.coef)-1, len(d.coef)-1
+    q = P(np.array([0], dtype=complex), domain=d.domain, window=d.window)
+    
+    #Divide out highest-order monomial
+    while dimr>=dimd: 
+        q1 = np.append(np.zeros((dimr-dimd,)), r.coef[dimr]/d.coef[dimd])
+        q1 = P(q1, domain=d.domain, window=d.window)
+        r  = r - q1 * d 
+        q  = q + q1
+        dimr = dimr - 1
+    
+    return q, r 
+
+def poly3_roots(poly): 
+    """ Find roots of cubic polynomial. """
+    
+    coef = np.array(poly.coef, dtype=complex)
+    d0 = coef[2]**2 - 3*coef[3]*coef[1]
+    d1 = 2*coef[2]**3 - 9*coef[3]*coef[2]*coef[1] + 27*coef[3]**2*coef[0]
+    
+    C = d1 + (d1**2 - 4*d0**3)**(1/2)
+    if np.abs(C) == 0:
+        C = d1 - (d1**2 - 4*d0**3)**(1/2)
+    C = (C / 2)**(1/3)
+   
+    #Find 1 root
+    roots = np.array([-(coef[2] + C + d0 / C) / (3 * coef[3])])
+    factor = np.polynomial.Polynomial((-roots[0],1), domain=poly.domain,
+                                      window=poly.window)
+    
+    #Find the other 2 roots
+    mod, rem = poly_divide(poly, factor)
+    roots = np.append(roots, poly2_roots(mod))
+    
+    return roots
+    
+def poly2_roots(poly):
+    """ Find roots of quadratic polynomial. """
+    coef = np.array(poly.coef, dtype=complex)
+    D = coef[1]**2 - 4*coef[0]*coef[2]
+    roots = np.array([-1,1]) * D**(1/2) - coef[1]
+    roots = roots / (2 * coef[2])
+    return roots
+
+#%% Plotting functions 
+
+# Display model information
+def display(model):
+    state = model.init_state
+    print('Model information:')
+    print('eta1: {:.2f}'.format(model.eta1(state)))
+    print('eta2: {:.2f}'.format(model.eta2(state)))
+    print('eta3: {:.2f}'.format(model.eta3(state)))
+
+    trans_eq = model.trans_eq(state)
+    temp_eq = model.temp_eq(state, trans_eq)
+    salt_eq = model.salt_eq(state, trans_eq)
+
+    eq_str = '{:16s} {:16s} {:16s}'.format(
+        'transport', 'temperature diff', 'salinity diff')
+    print('\n' + eq_str)
+    eq_str = '{:16s} {:16s} {:16s}'.format('[Sv]', '[C]', '[ppt]')
+    print(eq_str)
+    for trans, temp, salt in zip(trans_eq, temp_eq, salt_eq):
+        print('{:16.4e} {:16.2f} {:16.3f}'.format(trans*1e-6, temp, salt))
+    print()
 
 def time_figure(tseq):
     plt.close('all')

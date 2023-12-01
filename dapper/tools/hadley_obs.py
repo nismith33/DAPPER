@@ -26,7 +26,7 @@ import pickle as pkl
 
 # Directory containing files downloaded from Hadley server.
 DIR = "<topdir containing files downloaded from server or containing dirs with those files>"
-#DIR = "/home/ivo/dpr_data/stommel"
+FILE_NAME = 'boxed_hadley_inverted0422.pkl'
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
 #SECONDS IN YEAR
@@ -784,7 +784,7 @@ def create_surface(data, indices, period=np.timedelta64(int(YEAR),'s')):
 print('Starting data processing at ',datetime.now())
 # Read in data from files.
 obs = HadleyObs(DIR, chunck_size=CHUNCK_SIZE)
-output = obs.read()
+output = obs.read(time_bounds=(datetime(2004,1,1),datetime(2022,12,31)))
 # Start clustering.
 clusterer = StommelClusterer(output)
 # Indices of points in North Atlantic and
@@ -860,7 +860,7 @@ for label, index in zip(labels, hv_indices):
     if all(label==['equator','ocean']):
         boxed_hadley = {**boxed_hadley, 'geo_eq':geo}
         
-with open(os.path.join(DIR, 'boxed_hadley_inverted.pkl'), 'wb') as stream:
+with open(os.path.join(DIR, FILE_NAME), 'wb') as stream:
     pkl.dump(boxed_hadley, stream)
 
 #Start time
