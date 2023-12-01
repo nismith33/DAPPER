@@ -22,7 +22,7 @@ def exp_ref_forcing_da(N=100, seed=1000):
     # Timestepping. Timesteps of 1 day, running for 200 year.
     kko = np.arange(1, len(hadley['yy'][1:]))
     tseq = modelling.Chronology(stommel.year/12, kko=kko,
-                                T=23*stommel.year)  # 1 observation/month
+                                T=50*stommel.year)  # 1 observation/month
     # Create default Stommel model
     model = stommel.StommelModel()
     # Switch on heat exchange with atmosphere.
@@ -126,3 +126,21 @@ if __name__ == '__main__':
                  'times':[HMM.tseq.otimes[0],HMM.tseq.otimes[-1]],
                  }
         pkl.dump(stats,stream)
+        
+#%% Print best estimates and 95 confidence interval
+from scipy.stats import norm 
+
+mu, sig = np.mean(Eana[-1],0)[4:], np.std(Eana[-1],0,ddof=1)[4:]
+best = np.exp(stommel.ens_modus(Eana)[-1,4:])
+
+for b1, mu1, sig1 in zip(best, mu, sig):
+    norm1 = norm(loc=mu1, scale=sig1)
+    print('(best, confidence 90)',b1, np.exp(norm1.ppf(.05)), np.exp(norm1.ppf(.95)))
+    
+A_Tair = np.sqrt(np.sum(np.diff(hadley['surface_temperature_harmonic'],axis=1)[1:]**2))
+A_Sair = np.sqrt(np.sum(np.diff(hadley['surface_salinity_harmonic'],axis=1)[1:]**2))
+dys = [hadley['geo_eq']['dy'],hadley['geo_pole']['dy']]
+dybar = np.prod(dys)/np.sum(dys)
+print('Omega dimensionaless ',2*np.pi / stommel.year * (hadley['geo_eq']['dz']/best[0]))
+print('Tair amplitude', A_Tair, A_Tair * (model.eos.alpha_T * best[-1] / best[0]) * hadley['geo_eq']['dz']/ dybar)
+print('Sair amplitude', A_Sair, A_Sair * (best[1]/best[0]) * (model.eos.alpha_S * best[-1] / best[0]) * hadley['geo_eq']['dz'] / dybar)
