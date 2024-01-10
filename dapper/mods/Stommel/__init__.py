@@ -16,7 +16,9 @@ from copy import copy
 
 #Directory to store figures. 
 fig_dir = "<dir for storing figures>"
+fig_dir = "/home/ivo/Figures/stommel/test"
 DIR = "<topdir containing files downloaded from server or containing dirs with those files>"
+DIR = '/media/ivo/backup/hadley_et4'
 FILE_NAME = 'boxed_hadley_inverted0422.pkl'
 hadley_file = os.path.join(DIR, FILE_NAME)
 if not os.path.exists(hadley_file):

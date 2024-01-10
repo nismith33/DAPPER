@@ -25,7 +25,8 @@ import matplotlib as mpl
 import pickle as pkl
 
 # Directory containing files downloaded from Hadley server.
-DIR = "<topdir containing files downloaded from server or containing dirs with those files>"
+DIR = "<topdir /media/ivo/backup/hadley_et4containing files downloaded from server or containing dirs with those files>"
+DIR = '/media/ivo/backup/hadley_et4'
 FILE_NAME = 'boxed_hadley_inverted0422.pkl'
 # Earth radius
 EARTH_RADIUS = 6.3781e6  # m
