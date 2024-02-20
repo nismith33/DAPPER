@@ -17,30 +17,25 @@ import shutil
 fig_dir = stommel.fig_dir
 shutil.copy(__file__, fig_dir) 
 
-def exp_ref_forcing_da(N=100, seed=1000):
+#Time period for observations 
+kko = np.arange(1, len(hadley['yy'][1:]))
+tseq = modelling.Chronology(stommel.year/12, kko=kko,
+                            T=200*stommel.year)  # 1 observation/month
+T0 = np.max(tseq.tto)
+
+
+#Number of months of observations 
+def exp_ref_forcing_da(N=100, seed=1000, with_da=False):
     np.random.seed(seed)
     # Timestepping. Timesteps of 1 day, running for 200 year.
-    kko = np.arange(1, len(hadley['yy'][1:]))
+    if with_da:
+        kko = np.arange(1, len(hadley['yy'][1:]))
+    else:
+        kko = np.array([])
     tseq = modelling.Chronology(stommel.year/12, kko=kko,
-                                T=400*stommel.year)  # 1 observation/month
-    # Create default Stommel model
-    model = stommel.StommelModel()
-    # Switch on heat exchange with atmosphere.
-    # Start with default stationary surface temperature and salinity.
-    default_temps = stommel.hadley_air_temp(N)
-    default_salts = stommel.hadley_air_salt(N)
-    ## Add additional periodic forcing
-    #temp_forcings, salt_forcings = stommel.budd_forcing(model, model.init_state, 86., 0.0,
-    #                                                    stommel.Bhat(0.0, 0.0), 0.00)
-    #temp_forcings = [stommel.add_functions(
-    #    f0, f1) for f0, f1 in zip(default_temps, temp_forcings)]
-    #salt_forcings = [stommel.add_functions(
-    #    f0, f1) for f0, f1 in zip(default_salts, salt_forcings)]
-    
-    
+                                T=200*stommel.year)  # 1 observation/month
     def clima_T(t):
         """ Warming surface due climate change in K. """
-        T0 = np.max(tseq.tto)
         if t<T0:
             #No warming over DA period
             return np.array([0,0])
@@ -50,7 +45,6 @@ def exp_ref_forcing_da(N=100, seed=1000):
         
     def clima_S(t):
         """ Freshening due to melt Greenland. """
-        T0 = np.max(tseq.tto)
         volume = 2.9e15 #m3
         melt_period = 10000 * stommel.year 
         A = model.dx[0,:] * model.dy[0,:] #area stommel boxes 
@@ -59,11 +53,18 @@ def exp_ref_forcing_da(N=100, seed=1000):
             return np.array([0,0])
         else:
             return np.array([-volume/melt_period,0]) / A
-    
+        
+    # Create default Stommel model
+    model = stommel.StommelModel()
+    # Switch on heat exchange with atmosphere.
+    # Start with default stationary surface temperature and salinity.
+    default_temps = stommel.hadley_air_temp(N)
     temp_forcings = [stommel.add_functions(f, clima_T) for f in default_temps]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
+    #Add surface salt forcing
+    default_salts = stommel.hadley_air_salt(N)
     model.fluxes.append(stommel.SaltAirFlux(default_salts))
-    
+    #Add melt
     melt_rates = [clima_S for _ in range(N)]
     model.fluxes.append(stommel.EPFlux(melt_rates))
     
@@ -96,10 +97,10 @@ def exp_ref_forcing_da(N=100, seed=1000):
     HMM = modelling.HiddenMarkovModel(Dyn, Obs, tseq, X0)
     # Create DA
     xp = EnKF('Sqrt', N, infl=1.0)
-    return xp, HMM, model,temp_forcings,salt_forcings
+    return xp, HMM, model
 
 if __name__ == '__main__':
-    xp, HMM, model, temp_forcings, salt_forcings = exp_ref_forcing_da()
+    xp, HMM, model = exp_ref_forcing_da(with_da=True)
 
     # Run
     xx, yy = HMM.simulate()

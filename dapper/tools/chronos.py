@@ -114,7 +114,10 @@ class Chronology():
             self.Tplot = Tplot
             
         self.times = np.arange(0, self.K+1) * self.dt 
-        self.otimes = self.times[self.kko]
+        if len(self.kko)==0:
+            self.otimes = np.array([])
+        else:
+            self.otimes = self.times[self.kko]
 
     ######################################
     # "State vars". Can be set (changed).
