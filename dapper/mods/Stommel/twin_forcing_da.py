@@ -58,15 +58,15 @@ def exp_ref_forcing_da(N=100, seed=1000, with_da=False):
     model = stommel.StommelModel()
     # Switch on heat exchange with atmosphere.
     # Start with default stationary surface temperature and salinity.
-    default_temps = stommel.hadley_air_temp(N)
-    temp_forcings = [stommel.add_functions(f, clima_T) for f in default_temps]
+    temp_forcings = stommel.hadley_air_temp(N)
+    #temp_forcings = [stommel.add_functions(f, clima_T) for f in temp_forcings]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
     #Add surface salt forcing
     default_salts = stommel.hadley_air_salt(N)
     model.fluxes.append(stommel.SaltAirFlux(default_salts))
     #Add melt
     melt_rates = [clima_S for _ in range(N)]
-    model.fluxes.append(stommel.EPFlux(melt_rates))
+    #model.fluxes.append(stommel.EPFlux(melt_rates))
     
     # Initial conditions
     x0 = model.x0
