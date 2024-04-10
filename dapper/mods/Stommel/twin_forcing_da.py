@@ -62,6 +62,7 @@ def exp_ref_forcing_da(N=100, seed=1800, with_da=False):
         kko = np.array([])
     tseq = modelling.Chronology(stommel.year/12, kko=kko,
                                 T=LENGTH*stommel.year)  # 1 observation/month
+    
     def clima_T(t):
         """ Warming surface due climate change in K. """
         if t<T0:
@@ -88,6 +89,7 @@ def exp_ref_forcing_da(N=100, seed=1800, with_da=False):
     # Start with default stationary surface temperature and salinity.
     default_temps = stommel.hadley_air_temp(N)
     temp_forcings = default_temps #temporary line
+
     #Add surface salt forcing
     default_salts = stommel.hadley_air_salt(N)
     model.fluxes.append(stommel.SaltAirFlux(default_salts))
@@ -137,6 +139,7 @@ if __name__ == '__main__':
     xp, HMM, model = exp_ref_forcing_da(seed=1800,with_da=with_da)
     # Run
     xx, yy = HMM.simulate()
+
     if experiment_name in ['noWarmingDA', 'WarmingDA']:
         yy = hadley['yy'][HMM.tseq.kko]
         print('Using Hadley')
