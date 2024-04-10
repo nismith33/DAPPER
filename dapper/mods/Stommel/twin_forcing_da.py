@@ -20,7 +20,7 @@ shutil.copy(__file__, fig_dir)
 #Time period for observations 
 kko = np.arange(1, len(hadley['yy'][1:]))
 tseq = modelling.Chronology(stommel.year/12, kko=kko,
-                            T=200*stommel.year)  # 1 observation/month
+                            T=100*stommel.year)  # 1 observation/month
 T0 = np.max(tseq.tto)
 
 
@@ -33,7 +33,7 @@ def exp_ref_forcing_da(N=100, seed=1000, with_da=False):
     else:
         kko = np.array([])
     tseq = modelling.Chronology(stommel.year/12, kko=kko,
-                                T=200*stommel.year)  # 1 observation/month
+                                T=100*stommel.year)  # 1 observation/month
     def clima_T(t):
         """ Warming surface due climate change in K. """
         if t<T0:
@@ -59,14 +59,14 @@ def exp_ref_forcing_da(N=100, seed=1000, with_da=False):
     # Switch on heat exchange with atmosphere.
     # Start with default stationary surface temperature and salinity.
     temp_forcings = stommel.hadley_air_temp(N)
-    #temp_forcings = [stommel.add_functions(f, clima_T) for f in temp_forcings]
+    temp_forcings = [stommel.add_functions(f, clima_T) for f in temp_forcings]
     model.fluxes.append(stommel.TempAirFlux(temp_forcings))
     #Add surface salt forcing
     default_salts = stommel.hadley_air_salt(N)
     model.fluxes.append(stommel.SaltAirFlux(default_salts))
     #Add melt
     melt_rates = [clima_S for _ in range(N)]
-    #model.fluxes.append(stommel.EPFlux(melt_rates))
+    model.fluxes.append(stommel.EPFlux(melt_rates))
     
     # Initial conditions
     x0 = model.x0
@@ -104,7 +104,7 @@ if __name__ == '__main__':
 
     # Run
     xx, yy = HMM.simulate()
-    #yy = hadley['yy'][HMM.tseq.kko]
+    yy = hadley['yy'][HMM.tseq.kko]
     Efor, Eana = xp.assimilate(HMM, xx, yy)
 
     # Calculate etas
